@@ -39,7 +39,7 @@ async def predict(
         results = model.predict(source=image, save=False, conf=0.25)
 
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        dir_name = "D:/work(work only)/python/UAVRoadDetection/backend/result"
+        dir_name = "D:/work(work only)/python/UAVRoadDetection/result"
         save_dir = os.path.join(dir_name, today)
         os.makedirs(save_dir, exist_ok=True)
 
