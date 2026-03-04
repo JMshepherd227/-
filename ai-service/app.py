@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import FastAPI, File, UploadFile, Form
+from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
 from ultralytics import YOLO
 from PIL import Image
@@ -20,24 +20,21 @@ class DetectionItem(BaseModel):
     bbox: List[float]
 
 class PredictResponse(BaseModel):
-    longitude: float
-    latitude: float
     filePath: str
     detections: List[DetectionItem]
+    detection_num: int
     message: str
 
 @app.post("/predict/")
 async def predict(
         file: UploadFile = File(...),
-        longitude: float = Form(...),
-        latitude: float = Form(...),
 ):
     try:
         contents = await file.read()
         image = Image.open(io.BytesIO(contents)).convert("RGB")
 
         results = model.predict(source=image, save=False, conf=0.25)
-
+        r = results[0]
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         dir_name = "D:/work(work only)/python/UAVRoadDetection/result"
         save_dir = os.path.join(dir_name, today)
@@ -49,9 +46,9 @@ async def predict(
         full_save_path = os.path.join(save_dir, filename)
 
         detections = []
+        detections_num = len(r.boxes)
 
         if len(results) > 0:
-            r = results[0]
             result_img = r.plot()
             cv2.imwrite(full_save_path, result_img)
             class_ids = r.boxes.cls.cpu().numpy().astype(int)
@@ -66,6 +63,7 @@ async def predict(
                         bbox=box.tolist()
                     )
                 )
+                detections_num+=1
         else:
             import numpy as np
             cv2.imwrite(full_save_path, cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR))
@@ -73,10 +71,9 @@ async def predict(
         relative_path = f"{dir_name}/{today}/{filename}"
 
         return PredictResponse(
-            longitude=longitude,
-            latitude=latitude,
             filePath=relative_path,
             detections=detections,
+            detection_num=detections_num,
             message="Success"
         )
 
