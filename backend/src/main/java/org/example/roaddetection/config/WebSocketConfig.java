@@ -17,7 +17,6 @@ public class WebSocketConfig implements WebSocketConfigurer {
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(droneWebSocketHandler, "/ws/telemetry")
-                // 【极其重要】允许跨域！因为你的 Vue 通常在 localhost:5173 运行，后端在 8080
                 .setAllowedOrigins("*");
     }
 }
