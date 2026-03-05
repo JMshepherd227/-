@@ -12,6 +12,7 @@ import org.example.roaddetection.entity.DefectDetail;
 import org.example.roaddetection.entity.InspectionImage;
 import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.InspectionImageMapper;
+import org.example.roaddetection.mapper.InspectionTaskMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -34,6 +35,9 @@ public class DroneService {
 
     @Resource
     private DroneWebSocketHandler webSocketHandler;
+
+    @Resource
+    private InspectionTaskMapper inspectionTaskMapper;
 
     /** Python AI 接口 */
     private static final String AI_URL = "http://localhost:8000/predict/";
@@ -75,6 +79,7 @@ public class DroneService {
         if (hasDefect) {
             saveDefectDetails(imageRecord.getId(), aiResult);
             notifyFrontend(taskId, lng, lat, aiResult, resultUrl);
+            inspectionTaskMapper.increaseDefectCount(taskId, aiResult.getDetections_num());
         } else {
             log.info("【检测通过】该坐标无病害");
         }
