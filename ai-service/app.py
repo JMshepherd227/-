@@ -17,12 +17,11 @@ class DetectionItem(BaseModel):
     class_id: int
     class_name: str
     confidence: float
-    bbox: List[float]
 
 class PredictResponse(BaseModel):
     filePath: str
     detections: List[DetectionItem]
-    detection_num: int
+    detections_num: int
     message: str
 
 @app.post("/predict/")
@@ -47,23 +46,21 @@ async def predict(
 
         detections = []
         detections_num = len(r.boxes)
+        print(detections_num)
 
         if len(results) > 0:
             result_img = r.plot()
             cv2.imwrite(full_save_path, result_img)
             class_ids = r.boxes.cls.cpu().numpy().astype(int)
             confidences = r.boxes.conf.cpu().numpy()
-            boxes = r.boxes.xyxy.cpu().numpy()
-            for cid, conf, box in zip(class_ids, confidences, boxes):
+            for cid, conf in zip(class_ids, confidences):
                 detections.append(
                     DetectionItem(
                         class_id=int(cid),
                         class_name=r.names[int(cid)],
                         confidence=float(conf),
-                        bbox=box.tolist()
                     )
                 )
-                detections_num+=1
         else:
             import numpy as np
             cv2.imwrite(full_save_path, cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR))
@@ -73,7 +70,7 @@ async def predict(
         return PredictResponse(
             filePath=relative_path,
             detections=detections,
-            detection_num=detections_num,
+            detections_num=detections_num,
             message="Success"
         )
 

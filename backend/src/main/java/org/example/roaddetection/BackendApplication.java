@@ -1,9 +1,12 @@
 package org.example.roaddetection;
 
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-//1111111111111111111111111111111111
+
+
 @SpringBootApplication
+@MapperScan("org.example.roaddetection.mapper")
 public class BackendApplication {
 
     public static void main(String[] args) {
