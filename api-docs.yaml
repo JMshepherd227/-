@@ -1,0 +1,588 @@
+openapi: 3.0.3
+info:
+  title: 无人机道路病害检测系统 API 文档
+  description: |
+    这是《无人机道路病害检测》大创项目的核心后端接口文档。
+    包含无人机管理、巡检任务调度、地图可视化以及数据采集模块。
+
+    ### 实时通信说明
+    本系统包含一个 WebSocket 通道用于前端实时渲染无人机位置和接收病害报警。
+    * **WebSocket 地址**: `ws://<Server_IP>:8080/ws/telemetry`
+    * **协议格式**: JSON
+    * **上行数据**: 无（由 Python 模拟器通过 HTTP 接口推送到后端，后端再广播）
+    * **下行数据**:
+      1. `type: "telemetry"` - 无人机实时坐标数组
+      2. `type: "new_defect"` - 新发现病害报警
+
+  contact:
+    name: 开发团队
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: 本地开发环境
+
+tags:
+  - name: 无人机设备管理
+    description: 管理无人机资产，包括增删改查
+  - name: 巡检任务管理
+    description: 负责航线规划、任务创建及状态流转
+  - name: 数据采集与上报
+    description: 处理无人机/模拟器上传的高频遥测数据及抓拍图片
+  - name: 地图可视化
+    description: 为前端大屏提供视口内的病害数据与热力图支持
+
+paths:
+  # ==========================================
+  # 无人机设备管理
+  # ==========================================
+  /api/v1/devices:
+    get:
+      tags:
+        - 无人机设备管理
+      summary: 获取无人机列表
+      description: 获取所有注册的无人机设备，用于前端下拉框选择或列表展示。
+      operationId: getDroneList
+      responses:
+        '200':
+          description: 成功返回列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultListDroneDevice'
+    post:
+      tags:
+        - 无人机设备管理
+      summary: 添加无人机
+      description: 注册新的无人机设备。
+      operationId: droneUpload
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DroneDevice'
+        required: true
+      responses:
+        '200':
+          description: 添加成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+
+  /api/v1/devices/{id}:
+    get:
+      tags:
+        - 无人机设备管理
+      summary: 获取无人机详情
+      operationId: getDrone
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 无人机 ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+    put:
+      tags:
+        - 无人机设备管理
+      summary: 修改无人机信息
+      operationId: droneUpdate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 无人机 ID
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DroneDevice'
+        required: true
+      responses:
+        '200':
+          description: 修改成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+    delete:
+      tags:
+        - 无人机设备管理
+      summary: 删除无人机
+      operationId: droneDelete
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 无人机 ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+
+  # ==========================================
+  # 巡检任务管理
+  # ==========================================
+  /api/v1/tasks:
+    get:
+      tags:
+        - 巡检任务管理
+      summary: 获取任务列表
+      description: 获取所有巡检任务，支持按创建时间倒序排列。
+      operationId: getTaskList
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultListInspectionTask'
+    post:
+      tags:
+        - 巡检任务管理
+      summary: 创建巡检任务
+      description: 创建新任务并规划航线（routePoints 需传入 JSON 字符串）。
+      operationId: taskCreate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InspectionTask'
+        required: true
+      responses:
+        '200':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+
+  /api/v1/tasks/{id}:
+    get:
+      tags:
+        - 巡检任务管理
+      summary: 获取任务详情
+      operationId: getTask
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 任务 ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+    put:
+      tags:
+        - 巡检任务管理
+      summary: 修改任务信息
+      operationId: taskUpdate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 任务 ID
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InspectionTask'
+        required: true
+      responses:
+        '200':
+          description: 修改成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+    delete:
+      tags:
+        - 巡检任务管理
+      summary: 删除任务
+      description: 仅能删除状态为“未开始”的任务。
+      operationId: taskDelete
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 任务 ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+
+  /api/v1/tasks/{id}/start:
+    put:
+      tags:
+        - 巡检任务管理
+      summary: 开始任务
+      description: 将任务状态流转为“执行中” (1)。前端点击开始按钮时调用。
+      operationId: taskStart
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 任务 ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: 任务启动成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultListInspectionTask'
+
+  /api/v1/tasks/{id}/finish:
+    put:
+      tags:
+        - 巡检任务管理
+      summary: 结束任务
+      description: 将任务状态流转为“已完成” (2)。通常由 Python 模拟器在跑完航线后自动调用。
+      operationId: taskFinish
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 任务 ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: 任务结算完成
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultListInspectionTask'
+
+  # ==========================================
+  # 数据采集与上报 (机器接口)
+  # ==========================================
+  /api/v1/drones/upload:
+    post:
+      tags:
+        - 数据采集与上报
+      summary: 图片抓拍上传 (调用 AI)
+      description: |
+        接收无人机拍摄的图片和坐标，后端会自动调用 Python AI 接口进行病害识别。
+        若发现病害，会自动通过 WebSocket 广播给前端。
+      operationId: uploadImage
+      parameters:
+        - name: taskId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: droneId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: lng
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 抓拍的图片文件
+      responses:
+        '200':
+          description: 处理成功 (AI 识别完毕)
+          content:
+            '*/*':
+              schema:
+                type: string
+
+  /api/v1/drones/telemetry:
+    post:
+      tags:
+        - 数据采集与上报
+      summary: 遥测数据上报 (100ms/次)
+      description: |
+        接收无人机的高频 GPS 数据。
+        注意：此接口**不存数据库**，直接通过 WebSocket 广播给前端地图进行渲染。
+      operationId: receiveTelemetry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                taskId:
+                  type: integer
+                  example: 10
+                droneId:
+                  type: integer
+                  example: 1
+                lng:
+                  type: number
+                  format: double
+                  example: 116.397123
+                lat:
+                  type: number
+                  format: double
+                  example: 39.909123
+                heading:
+                  type: number
+                  description: 机头朝向 (0-360)
+                  example: 90.5
+      responses:
+        '200':
+          description: 广播成功
+          content:
+            '*/*':
+              schema:
+                type: string
+
+  # ==========================================
+  # 地图可视化
+  # ==========================================
+  /api/v1/map/defects:
+    get:
+      tags:
+        - 地图可视化
+      summary: 获取视口内的病害点
+      description: 根据当前地图的屏幕范围 (Bounding Box)，返回该区域内的所有病害详情。用于地图拖拽/缩放时的动态加载。
+      operationId: getDefects
+      parameters:
+        - name: minLng
+          in: query
+          required: true
+          description: 最小经度 (左下角)
+          schema:
+            type: number
+            format: double
+        - name: maxLng
+          in: query
+          required: true
+          description: 最大经度 (右上角)
+          schema:
+            type: number
+            format: double
+        - name: minLat
+          in: query
+          required: true
+          description: 最小纬度 (左下角)
+          schema:
+            type: number
+            format: double
+        - name: maxLat
+          in: query
+          required: true
+          description: 最大纬度 (右上角)
+          schema:
+            type: number
+            format: double
+      responses:
+        '200':
+          description: 成功返回病害列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultListDefectDetail'
+
+components:
+  schemas:
+    # 实体对象模型
+    InspectionTask:
+      type: object
+      description: 巡检任务实体
+      properties:
+        id:
+          type: integer
+          format: int64
+        taskName:
+          type: string
+          description: 任务名称
+          example: "南校区主干道巡检"
+        droneId:
+          type: integer
+          format: int64
+          description: 绑定的无人机ID
+        routePoints:
+          type: string
+          description: 航线点位 JSON 字符串
+          example: '[{"lng":116.3,"lat":39.9}, {"lng":116.4,"lat":39.8}]'
+        status:
+          type: integer
+          format: int32
+          description: '状态: 0-未开始, 1-执行中, 2-已完成'
+        createTime:
+          type: string
+          format: date-time
+        updateTime:
+          type: string
+          format: date-time
+
+    DroneDevice:
+      type: object
+      description: 无人机设备实体
+      properties:
+        id:
+          type: integer
+          format: int64
+        droneName:
+          type: string
+          description: 无人机名称/型号
+          example: "M300-RTK-01"
+        status:
+          type: integer
+          format: int32
+          description: '状态: 0-空闲, 1-任务中'
+        lastLng:
+          type: number
+          format: double
+        lastLat:
+          type: number
+          format: double
+        createTime:
+          type: string
+          format: date-time
+        updateTime:
+          type: string
+          format: date-time
+
+    DefectDetail:
+      type: object
+      description: 病害详情实体
+      properties:
+        id:
+          type: integer
+          format: int64
+        imageId:
+          type: integer
+          format: int64
+          description: 关联的图片ID
+        defectType:
+          type: string
+          description: 病害类型 (crack, pothole)
+          example: "crack"
+        confidence:
+          type: number
+          format: double
+          description: AI置信度 (0-1)
+          example: 0.95
+        createTime:
+          type: string
+          format: date-time
+
+    # 统一返回结果封装 (Result Wrapper)
+    ResultDroneDevice:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        msg:
+          type: string
+          example: "操作成功"
+        data:
+          $ref: '#/components/schemas/DroneDevice'
+
+    ResultListDroneDevice:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        msg:
+          type: string
+          example: "操作成功"
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DroneDevice'
+
+    ResultInspectionTask:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        msg:
+          type: string
+          example: "操作成功"
+        data:
+          $ref: '#/components/schemas/InspectionTask'
+
+    ResultListInspectionTask:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        msg:
+          type: string
+          example: "操作成功"
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/InspectionTask'
+
+    ResultListDefectDetail:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        msg:
+          type: string
+          example: "操作成功"
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DefectDetail'
