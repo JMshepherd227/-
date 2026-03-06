@@ -1,12 +1,11 @@
 package org.example.roaddetection.controller;
 
-import org.example.roaddetection.config.DroneWebSocketHandler;
+import org.example.roaddetection.common.TelemetryQueue;
 import org.example.roaddetection.service.DroneService;
 import org.springframework.web.bind.annotation.*;
 import jakarta.annotation.Resource;
 import java.util.Map;
-import java.util.List;
-import cn.hutool.json.JSONUtil;
+
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
@@ -14,26 +13,20 @@ import org.springframework.web.multipart.MultipartFile;
 public class DroneIngestController {
 
     @Resource
-    private DroneWebSocketHandler webSocketHandler;
+    private TelemetryQueue telemetryQueue;
 
     /**
      * 无人机位置上报
      */
     @PostMapping("/telemetry")
     public String receiveTelemetry(@RequestBody Map<String, Object> telemetryData) {
+        try{
+            telemetryQueue.produce(telemetryData);
+            return "{\"code\": 200, \"msg\": \"遥测数据已成功广播\"}";
+        } catch (Exception e){
+            return "{\"code\": 500, \"msg\": \"广播失败: " + e.getMessage() + "\"}";
+        }
 
-        // 1. 接收无人机单条位置数据，包装成 WebSocket 规定的数组格式
-        // {"type": "telemetry", "data": [{...}]}
-        Map<String, Object> wsMessage = Map.of(
-                "type", "telemetry",
-                "data", List.of(telemetryData)
-        );
-
-        String jsonStr = JSONUtil.toJsonStr(wsMessage);
-
-        webSocketHandler.broadcastMessage(jsonStr);
-
-        return "{\"code\": 200, \"msg\": \"遥测数据已成功广播\"}";
     }
     @Resource
     private DroneService droneService;
@@ -50,7 +43,7 @@ public class DroneIngestController {
             @RequestParam("file") MultipartFile file) {
 
         try {
-            droneService.processUpload(taskId, droneId, lng, lat, file);
+            droneService.processUploadAsync(taskId, droneId, lng, lat, file);
             return "{\"code\": 200, \"msg\": \"图片上传与AI处理成功\"}";
         } catch (Exception e) {
             return "{\"code\": 500, \"msg\": \"处理失败: " + e.getMessage() + "\"}";

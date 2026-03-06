@@ -106,7 +106,7 @@ def run_simulation():
 
     # 3. 呼叫后端，任务完成！
     try:
-        finish_res = requests.put(f"{BACKEND_URL}/api/v1/tasks/{TASK_ID}/finish")
+        finish_res = requests.put(f"{BACKEND_URL}/api/v1/tasks/{DRONE_ID}/finish")
         print(f"✅ 任务结束信号已发送: {finish_res.text}")
     except Exception as e:
         print(f"⚠️ 结束任务请求异常: {e}")

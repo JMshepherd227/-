@@ -1,4 +1,4 @@
-package org.example.roaddetection.config;
+package org.example.roaddetection.common;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
