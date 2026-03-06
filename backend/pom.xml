@@ -21,6 +21,22 @@
     </properties>
 
     <dependencies>
+        <!-- Spring Boot Data Redis 依赖 (内含 Lettuce 客户端) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- (可选，但推荐) Jackson JSON 序列化支持，让 Redis 里存的不再是乱码 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+
         <!-- 2. 核心 Web 启动器：必须是 starter-web (含 Tomcat)，不能是 webmvc -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

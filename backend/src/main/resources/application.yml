@@ -17,6 +17,19 @@ spring:
     resources:
       static-locations: classpath:/META-INF/resources/,classpath:/resources/,classpath:/static/,classpath:/public/,file:D:/work(work only)/python/UAVRoadDetection/result/
 
+  data:
+    redis:
+      host: localhost  # Redis 服务器地址
+      port: 6379       # Redis 端口
+      # password: your_password # 如果你的 Redis 设置了密码
+      database: 0      # 使用 0 号数据库
+      lettuce:
+        pool:
+          max-active: 8 # 最大连接数
+          max-wait: -1ms # 连接池最大阻塞等待时间（-1 表示没有限制）
+          max-idle: 8    # 最大空闲连接
+          min-idle: 0    # 最小空闲连接
+
 mybatis-plus:
   configuration:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
