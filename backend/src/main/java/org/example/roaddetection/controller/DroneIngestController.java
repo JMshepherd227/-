@@ -1,6 +1,7 @@
 package org.example.roaddetection.controller;
 
 import org.example.roaddetection.common.TelemetryQueue;
+import org.example.roaddetection.service.DroneAsyncService;
 import org.example.roaddetection.service.DroneService;
 import org.springframework.web.bind.annotation.*;
 import jakarta.annotation.Resource;
@@ -29,7 +30,7 @@ public class DroneIngestController {
 
     }
     @Resource
-    private DroneService droneService;
+    private DroneAsyncService  droneAsyncService;
 
     /**
      * 无人机抓拍图片与位置上报
@@ -43,7 +44,7 @@ public class DroneIngestController {
             @RequestParam("file") MultipartFile file) {
 
         try {
-            droneService.processUploadAsync(taskId, droneId, lng, lat, file);
+            droneAsyncService.processUploadAsync(taskId, droneId, lng, lat, file);
             return "{\"code\": 200, \"msg\": \"图片上传与AI处理成功\"}";
         } catch (Exception e) {
             return "{\"code\": 500, \"msg\": \"处理失败: " + e.getMessage() + "\"}";

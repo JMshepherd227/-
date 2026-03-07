@@ -28,10 +28,14 @@ public class MapVisualizationController {
     @Resource
     private DefectDetailMapper defectDetailMapper;
     @Resource
-    RedisTemplate<String, Object> redisTemplate;
+    private RedisTemplate<String, Object> redisTemplate;
 
     /**
-     * 获取视口内的病害点
+     *  获取视口内的病害点
+     * @param z 缩放等级
+     * @param x 瓦片x坐标
+     * @param y 瓦片y坐标
+     * @return 包含病害点的接口响应
      */
     @GetMapping("/tile")
     public Result<List<InspectionImage>> getDefectsInViewport(
@@ -44,15 +48,15 @@ public class MapVisualizationController {
 
         int maxRetries = 20;
 
-        TileBBox BBox = TileUtil.tileToBBox(z, x, y);
+        TileBBox bbox = TileUtil.tileToBBox(z, x, y);
 
-        double maxLng = BBox.getMaxLng();
-        double maxLat = BBox.getMaxLat();
-        double minLng = BBox.getMinLng();
-        double minLat = BBox.getMinLat();
+        double maxLng = bbox.getMaxLng();
+        double maxLat = bbox.getMaxLat();
+        double minLng = bbox.getMinLng();
+        double minLat = bbox.getMinLat();
 
         try {
-            for (int retryCount = 0;retryCount < maxRetries;retryCount++) {
+            for (int retryCount = 0; retryCount < maxRetries; retryCount++) {
                 @SuppressWarnings("unchecked")
                 List<InspectionImage> cachedData = (List<InspectionImage>) redisTemplate.opsForValue().get(cacheKey);
                 if (cachedData != null) {

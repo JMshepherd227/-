@@ -35,6 +35,8 @@ public class DroneDeviceController {
         try {
             if(droneDeviceMapper.selectById(id)==null)
                 return Result.fail("id不存在");
+            if(droneDeviceMapper.selectById(id).getStatus() == 1)
+                return Result.fail("无人机工作中");
             droneDeviceMapper.deleteById(id);
             return Result.success();
         } catch (Exception e) {

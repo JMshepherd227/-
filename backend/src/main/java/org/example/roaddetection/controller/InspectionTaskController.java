@@ -51,6 +51,9 @@ public class InspectionTaskController {
         try {
             if(inspectionTaskMapper.selectById(id)==null)
                 return Result.fail("任务不存在");
+            if (inspectionTaskMapper.selectById(id).getStatus() == 1) {
+                return Result.fail("任务正在执行，无法删除");
+            }
             inspectionTaskMapper.deleteById(id);
             return Result.success();
         } catch (Exception e) {

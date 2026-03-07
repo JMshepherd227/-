@@ -40,26 +40,11 @@ public class DroneService {
     @Resource
     private InspectionTaskMapper inspectionTaskMapper;
 
-    @Resource
-    DroneService self;
-
     /** Python AI 接口 */
     private static final String AI_URL = "http://localhost:8000/predict/";
 
     /** 原图保存目录 */
     private static final String ORIGIN_DIR = "D:/work(work only)/python/UAVRoadDetection/origin";
-
-
-    @Async("aiTaskExecutor")
-    public void processUploadAsync(Long taskId, Long droneId, Double lng, Double lat, MultipartFile file) {
-        try {
-            log.info("【后台线程】开始处理图片...");
-            self.processUpload(taskId, droneId, lng, lat, file);
-        } catch (Exception e) {
-            log.error("【异步任务失败】无人机:{} 图片处理异常: {}", droneId, e.getMessage());
-        }
-    }
-
 
     /**
      * 处理无人机上传图片
