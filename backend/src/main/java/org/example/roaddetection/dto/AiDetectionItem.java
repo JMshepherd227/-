@@ -1,7 +1,6 @@
 package org.example.roaddetection.dto;
 
 import lombok.Data;
-import java.util.List;
 
 @Data
 public class AiDetectionItem {

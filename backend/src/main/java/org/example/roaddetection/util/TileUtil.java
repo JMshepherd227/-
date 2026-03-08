@@ -1,4 +1,6 @@
-package org.example.roaddetection.common;
+package org.example.roaddetection.util;
+
+import org.example.roaddetection.common.TileBBox;
 
 public class TileUtil {
 

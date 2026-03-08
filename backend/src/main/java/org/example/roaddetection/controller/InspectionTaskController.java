@@ -4,7 +4,7 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import jakarta.annotation.Resource;
 import org.example.roaddetection.common.Result;
-import org.example.roaddetection.common.DroneWebSocketHandler;
+import org.example.roaddetection.handler.DroneWebSocketHandler;
 import org.example.roaddetection.dto.TaskQueryDTO;
 import org.example.roaddetection.entity.DroneDevice;
 import org.example.roaddetection.entity.InspectionTask;

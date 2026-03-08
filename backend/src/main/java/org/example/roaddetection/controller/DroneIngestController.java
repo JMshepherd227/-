@@ -2,7 +2,6 @@ package org.example.roaddetection.controller;
 
 import org.example.roaddetection.common.TelemetryQueue;
 import org.example.roaddetection.service.DroneAsyncService;
-import org.example.roaddetection.service.DroneService;
 import org.springframework.web.bind.annotation.*;
 import jakarta.annotation.Resource;
 import java.util.Map;

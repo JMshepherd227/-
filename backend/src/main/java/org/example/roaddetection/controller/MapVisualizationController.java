@@ -5,7 +5,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.example.roaddetection.common.Result;
 import org.example.roaddetection.common.TileBBox;
-import org.example.roaddetection.common.TileUtil;
+import org.example.roaddetection.util.TileUtil;
 import org.example.roaddetection.entity.DefectDetail;
 import org.example.roaddetection.entity.InspectionImage;
 import org.example.roaddetection.mapper.DefectDetailMapper;
