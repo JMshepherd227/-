@@ -1,6 +1,5 @@
 package org.example.roaddetection.controller;
 
-import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import org.example.roaddetection.common.Result;
 import org.example.roaddetection.entity.DroneDevice;
