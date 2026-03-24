@@ -1,19 +1,19 @@
 package org.example.roaddetection.controller;
 
+import lombok.RequiredArgsConstructor;
 import org.example.roaddetection.common.TelemetryQueue;
 import org.example.roaddetection.service.DroneAsyncService;
 import org.springframework.web.bind.annotation.*;
-import jakarta.annotation.Resource;
 import java.util.Map;
 
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/v1/drones")
+@RequiredArgsConstructor
 public class DroneIngestController {
-
-    @Resource
-    private TelemetryQueue telemetryQueue;
+    private final TelemetryQueue telemetryQueue;
+    private final DroneAsyncService  droneAsyncService;
 
     /**
      * 无人机位置上报
@@ -28,8 +28,6 @@ public class DroneIngestController {
         }
 
     }
-    @Resource
-    private DroneAsyncService  droneAsyncService;
 
     /**
      * 无人机抓拍图片与位置上报

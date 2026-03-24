@@ -3,6 +3,7 @@ package org.example.roaddetection.controller;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import jakarta.annotation.Resource;
+import lombok.RequiredArgsConstructor;
 import org.example.roaddetection.common.Result;
 import org.example.roaddetection.handler.DroneWebSocketHandler;
 import org.example.roaddetection.dto.TaskQueryDTO;
@@ -18,13 +19,11 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/tasks")
+@RequiredArgsConstructor
 public class InspectionTaskController {
-    @Resource
-    private InspectionTaskMapper inspectionTaskMapper;
-    @Resource
-    private DroneDeviceMapper droneDeviceMapper;
-    @Resource
-    private DroneWebSocketHandler  webSocketHandler;
+    private final InspectionTaskMapper inspectionTaskMapper;
+    private final DroneDeviceMapper droneDeviceMapper;
+    private final DroneWebSocketHandler  webSocketHandler;
 
     /**
      * 创建任务

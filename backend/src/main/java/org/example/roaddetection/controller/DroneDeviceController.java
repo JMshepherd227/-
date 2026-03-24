@@ -1,6 +1,7 @@
 package org.example.roaddetection.controller;
 
 import jakarta.annotation.Resource;
+import lombok.RequiredArgsConstructor;
 import org.example.roaddetection.common.Result;
 import org.example.roaddetection.entity.DroneDevice;
 import org.example.roaddetection.mapper.DroneDeviceMapper;
@@ -10,10 +11,9 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/devices")
+@RequiredArgsConstructor
 public class DroneDeviceController {
-
-    @Resource
-    private DroneDeviceMapper droneDeviceMapper;
+    private final DroneDeviceMapper droneDeviceMapper;
 
     /**
      * 添加无人机

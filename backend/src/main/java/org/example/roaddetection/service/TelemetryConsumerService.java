@@ -2,6 +2,7 @@ package org.example.roaddetection.service;
 
 import cn.hutool.json.JSONUtil;
 import jakarta.annotation.Resource;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.roaddetection.handler.DroneWebSocketHandler;
 import org.example.roaddetection.common.TelemetryQueue;
@@ -12,12 +13,10 @@ import java.util.Map;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class TelemetryConsumerService {
-    @Resource
-    private DroneWebSocketHandler webSocketHandler;
-
-    @Resource
-    private TelemetryQueue telemetryQueue;
+    private final DroneWebSocketHandler webSocketHandler;
+    private final TelemetryQueue telemetryQueue;
 
     public void startConsuming() {
         Thread consumerThread = new Thread(() -> {

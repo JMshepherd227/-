@@ -4,6 +4,7 @@ import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
 import cn.hutool.json.JSONUtil;
 import jakarta.annotation.Resource;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.roaddetection.handler.DroneWebSocketHandler;
 import org.example.roaddetection.dto.AiDetectionItem;
@@ -25,19 +26,12 @@ import java.util.UUID;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class DroneService {
-
-    @Resource
-    private InspectionImageMapper imageMapper;
-
-    @Resource
-    private DefectDetailMapper detailMapper;
-
-    @Resource
-    private DroneWebSocketHandler webSocketHandler;
-
-    @Resource
-    private InspectionTaskMapper inspectionTaskMapper;
+    private final InspectionImageMapper imageMapper;
+    private final DefectDetailMapper detailMapper;
+    private final DroneWebSocketHandler webSocketHandler;
+    private final InspectionTaskMapper inspectionTaskMapper;
 
     /** Python AI 接口 */
     private static final String AI_URL = "http://localhost:8000/predict/";
