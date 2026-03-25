@@ -10,6 +10,7 @@ import org.example.roaddetection.entity.DroneDevice;
 import org.example.roaddetection.entity.InspectionTask;
 import org.example.roaddetection.mapper.DroneDeviceMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
+import org.springframework.beans.BeanUtils;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -26,12 +27,14 @@ public class InspectionTaskController {
 
     /**
      * 创建任务
-     * @param inspectionTask 任务详情信息
+     * @param dto 任务详情信息
      * @return 接口响应信息
      */
     @PostMapping("")
-    public Result<InspectionTask> taskCreate(@RequestBody InspectionTask inspectionTask) {
+    public Result<InspectionTask> taskCreate(@RequestBody TaskQueryDTO dto) {
         try {
+            InspectionTask inspectionTask = new InspectionTask();
+            BeanUtils.copyProperties(dto, inspectionTask);
             inspectionTaskMapper.insert(inspectionTask);
             return Result.success();
         } catch (Exception e) {
@@ -60,14 +63,16 @@ public class InspectionTaskController {
     }
 
     /**
-     *
-     * @param inspectionTask 任务数据
+     * 修改任务
+     * @param dto 任务数据
      * @param id 任务id
      * @return 接口响应信息
      */
     @PutMapping("/{id}")
-    public Result<InspectionTask> taskUpdate(@RequestBody InspectionTask inspectionTask, @PathVariable Long id) {
+    public Result<InspectionTask> taskUpdate(@RequestBody TaskQueryDTO dto, @PathVariable Long id) {
         try {
+            InspectionTask inspectionTask = new InspectionTask();
+            BeanUtils.copyProperties(dto, inspectionTask);
             inspectionTask.setId(id);
             if(inspectionTaskMapper.selectById(id)==null)
                 return Result.fail("任务不存在");
