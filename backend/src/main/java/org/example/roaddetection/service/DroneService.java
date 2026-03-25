@@ -5,6 +5,7 @@ import cn.hutool.http.HttpResponse;
 import cn.hutool.json.JSONUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.roaddetection.events.DefectDetectedEvent;
 import org.example.roaddetection.handler.DroneWebSocketHandler;
 import org.example.roaddetection.dto.AiDetectionItem;
 import org.example.roaddetection.dto.AiPredictResponse;
@@ -13,6 +14,7 @@ import org.example.roaddetection.entity.InspectionImage;
 import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.InspectionImageMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -31,6 +33,7 @@ public class DroneService {
     private final DefectDetailMapper detailMapper;
     private final DroneWebSocketHandler webSocketHandler;
     private final InspectionTaskMapper inspectionTaskMapper;
+    private final ApplicationEventPublisher publisher;
 
     /** Python AI 接口 */
     private static final String AI_URL = "http://localhost:8000/predict/";
@@ -71,7 +74,7 @@ public class DroneService {
         // 5. 保存病害详情 + 通知前端
         if (hasDefect) {
             saveDefectDetails(imageRecord.getId(), aiResult);
-            notifyFrontend(taskId, lng, lat, aiResult, resultUrl);
+            publisher.publishEvent(new DefectDetectedEvent(taskId, lng, lat, aiResult, resultUrl));
             inspectionTaskMapper.increaseDefectCount(taskId, aiResult.getDetections_num());
         } else {
             log.info("【检测通过】该坐标无病害");
@@ -177,28 +180,5 @@ public class DroneService {
 
             detailMapper.insert(detail);
         }
-    }
-
-    /**
-     * WebSocket 通知前端
-     */
-    private void notifyFrontend(Long taskId, Double lng, Double lat, AiPredictResponse aiResult, String imageUrl) {
-
-        String defectType = aiResult.getDetections().get(0).getClass_name();
-
-        Map<String, Object> wsMessage = Map.of(
-                "type", "new_defect",
-                "data", Map.of(
-                        "taskId", taskId,
-                        "lng", lng,
-                        "lat", lat,
-                        "defectType", defectType,
-                        "imageUrl", "http://localhost:8080/" + imageUrl
-                )
-        );
-
-        webSocketHandler.broadcastMessage(JSONUtil.toJsonStr(wsMessage));
-
-        log.warn("【发现病害】坐标({}, {}) 类型: {}", lng, lat, defectType);
     }
 }

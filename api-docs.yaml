@@ -1,0 +1,718 @@
+openapi: 3.0.1
+info:
+  title: 无人机道路损害检测系统 API
+  description: 提供无人机设备管理、道路巡检任务调度、路面采集图像上报及道路病害(裂缝/坑槽等)地图可视化等功能。
+  version: v1.0.0
+servers:
+  - url: http://localhost:8080
+    description: 本地开发环境服务器
+tags:
+  - name: inspection-task-controller
+    description: 道路巡检任务管理 (路段巡查任务创建、查询、状态控制)
+  - name: drone-device-controller
+    description: 无人机设备管理 (路巡无人机注册、查询、信息维护)
+  - name: drone-ingest-controller
+    description: 数据采集上报 (路面图片上传、飞行遥测数据)
+  - name: map-visualization-controller
+    description: 地图与病害可视化 (路面数据瓦片加载、道路损害详情展示)
+paths:
+  /api/v1/tasks/{id}:
+    get:
+      tags:
+        - inspection-task-controller
+      summary: 获取单条道路巡检任务详情
+      operationId: getTask
+      parameters:
+        - name: id
+          in: path
+          description: 任务唯一ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 成功获取任务详情
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+    put:
+      tags:
+        - inspection-task-controller
+      summary: 更新单条任务信息
+      operationId: taskUpdate
+      parameters:
+        - name: id
+          in: path
+          description: 任务唯一ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        description: 任务更新内容
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskUpdateDTO'
+        required: true
+      responses:
+        "200":
+          description: 成功更新任务
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+    delete:
+      tags:
+        - inspection-task-controller
+      summary: 删除单条任务
+      operationId: taskDelete
+      parameters:
+        - name: id
+          in: path
+          description: 任务唯一ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 成功删除任务
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+  /api/v1/tasks/{id}/start:
+    put:
+      tags:
+        - inspection-task-controller
+      summary: 开始道路巡检任务
+      operationId: taskStart
+      parameters:
+        - name: id
+          in: path
+          description: 任务唯一ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 任务已成功启动，无人机开始沿路段巡航
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultString'
+  /api/v1/tasks/{droneId}/finish:
+    put:
+      tags:
+        - inspection-task-controller
+      summary: 结束道路巡检任务
+      description: 注意此处的路径参数为无人机ID (droneId)，用于结束该无人机当前正在执行的道路巡查任务。
+      operationId: taskFinish
+      parameters:
+        - name: droneId
+          in: path
+          description: 正在执行任务的无人机ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 任务已成功结束
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultString'
+  /api/v1/devices/{id}:
+    get:
+      tags:
+        - drone-device-controller
+      summary: 获取单台无人机详情
+      operationId: getDrone
+      parameters:
+        - name: id
+          in: path
+          description: 无人机唯一ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 成功获取设备详情
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+    put:
+      tags:
+        - drone-device-controller
+      summary: 更新单台无人机信息
+      operationId: droneUpdate
+      parameters:
+        - name: id
+          in: path
+          description: 无人机唯一ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        description: 无人机更新内容
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DroneUpdateDTO'
+        required: true
+      responses:
+        "200":
+          description: 成功更新设备
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+    delete:
+      tags:
+        - drone-device-controller
+      summary: 删除单台无人机
+      operationId: droneDelete
+      parameters:
+        - name: id
+          in: path
+          description: 无人机唯一ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 成功删除设备
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+  /api/v1/tasks:
+    get:
+      tags:
+        - inspection-task-controller
+      summary: 分页/条件查询巡检任务列表
+      operationId: getTaskList
+      parameters:
+        - name: query
+          in: query
+          description: 任务查询条件
+          required: true
+          schema:
+            $ref: '#/components/schemas/TaskQueryDTO'
+      responses:
+        "200":
+          description: 成功获取任务列表
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultListInspectionTask'
+    post:
+      tags:
+        - inspection-task-controller
+      summary: 创建道路巡检任务
+      operationId: taskCreate
+      requestBody:
+        description: 任务创建参数 (设定无人机沿公路飞行的轨迹点)
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskUpdateDTO'
+        required: true
+      responses:
+        "200":
+          description: 成功创建任务
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+  /api/v1/drones/upload:
+    post:
+      tags:
+        - drone-ingest-controller
+      summary: 上传路面巡检图片
+      description: 无人机在沿道路飞行时，调用此接口上传采集到的路面图片及对应坐标，用于后续道路病害 AI 识别。
+      operationId: uploadImage
+      parameters:
+        - name: taskId
+          in: query
+          description: 关联的巡检任务ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: droneId
+          in: query
+          description: 上报的无人机ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: lng
+          in: query
+          description: 拍摄点原始经度
+          required: true
+          schema:
+            type: number
+            format: double
+        - name: lat
+          in: query
+          description: 拍摄点原始纬度
+          required: true
+          schema:
+            type: number
+            format: double
+      requestBody:
+        description: 图片文件流 (multipart/form-data)
+        content:
+          application/json:
+            schema:
+              required:
+                - file
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 路面图片二进制流
+      responses:
+        "200":
+          description: 图片上传成功，返回处理结果或URL
+          content:
+            '*/*':
+              schema:
+                type: string
+  /api/v1/drones/telemetry:
+    post:
+      tags:
+        - drone-ingest-controller
+      summary: 上报遥测数据
+      description: 无人机路测飞行过程中的实时状态（电量、高度、速度、定位等）上报接口。
+      operationId: receiveTelemetry
+      requestBody:
+        description: 动态键值的遥测数据 (Map格式)
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: object
+        required: true
+      responses:
+        "200":
+          description: 遥测数据接收成功
+          content:
+            '*/*':
+              schema:
+                type: string
+  /api/v1/devices:
+    get:
+      tags:
+        - drone-device-controller
+      summary: 获取所有无人机列表
+      operationId: getDroneList
+      responses:
+        "200":
+          description: 成功获取无人机列表
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultListDroneDevice'
+    post:
+      tags:
+        - drone-device-controller
+      summary: 注册/新增无人机
+      operationId: droneUpload
+      requestBody:
+        description: 新增无人机信息
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DroneUpdateDTO'
+        required: true
+      responses:
+        "200":
+          description: 无人机注册成功
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+  /api/v1/map/{imageId}/details:
+    get:
+      tags:
+        - map-visualization-controller
+      summary: 获取路面图片损害详情
+      description: 在地图上点击某张路面图片点位时，拉取该图片 AI 识别出的所有道路病害(如坑槽、裂缝)列表。
+      operationId: getDetail
+      parameters:
+        - name: imageId
+          in: path
+          description: 巡检图片唯一ID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 成功获取道路损害详情列表
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultListDefectDetail'
+  /api/v1/map/tile:
+    get:
+      tags:
+        - map-visualization-controller
+      summary: 获取视口内的路面图片/病害点 (瓦片加载)
+      description: 根据前端地图缩放层级(Z)和坐标(X, Y)加载该路段对应的巡检图片及病害点位。
+      operationId: getDefectsInViewport
+      parameters:
+        - name: z
+          in: query
+          description: 地图缩放级别 (Zoom)
+          required: true
+          schema:
+            type: integer
+            format: int32
+        - name: x
+          in: query
+          description: 瓦片 X 坐标
+          required: true
+          schema:
+            type: integer
+            format: int32
+        - name: "y"
+          in: query
+          description: 瓦片 Y 坐标
+          required: true
+          schema:
+            type: integer
+            format: int32
+      responses:
+        "200":
+          description: 成功获取该视口下的路面图片/病害点位数据
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultListInspectionImage'
+components:
+  schemas:
+    TaskUpdateDTO:
+      description: 道路任务更新/创建数据传输对象
+      type: object
+      properties:
+        taskName:
+          type: string
+          description: 任务名称 (如：G107国道北段路面损害巡检)
+        droneId:
+          type: integer
+          format: int64
+          description: 绑定的无人机ID
+        routePoints:
+          type: array
+          description: 沿道路巡视的航线点位集合
+          items:
+            type: object
+            additionalProperties:
+              type: number
+              format: double
+        status:
+          type: integer
+          format: int32
+          description: 任务状态 (0-未开始, 1-进行中, 2-已完成)
+        defectCount:
+          type: integer
+          format: int32
+          description: 航线上发现的道路损害总数
+    InspectionTask:
+      description: 道路巡检任务实体
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 任务唯一ID
+        taskName:
+          type: string
+          description: 任务名称
+        droneId:
+          type: integer
+          format: int64
+          description: 执行任务的无人机ID
+        routePoints:
+          type: array
+          description: 沿道路飞行的航线点位集合
+          items:
+            type: object
+            additionalProperties:
+              type: number
+              format: double
+        status:
+          type: integer
+          format: int32
+          description: 任务状态 (0-未开始, 1-进行中, 2-已完成)
+        createTime:
+          type: string
+          format: date-time
+          description: 任务创建时间
+        updateTime:
+          type: string
+          format: date-time
+          description: 任务最后更新时间
+        defectCount:
+          type: integer
+          format: int32
+          description: 道路损害累计总数
+    ResultInspectionTask:
+      description: 统一响应格式 (包装 InspectionTask)
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+          description: 响应状态码 (例如：200为成功)
+        msg:
+          type: string
+          description: 响应提示信息
+        data:
+          $ref: '#/components/schemas/InspectionTask'
+    ResultString:
+      description: 统一响应格式 (包装 String)
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: string
+          description: 返回的具体字符串数据/提示
+    DroneUpdateDTO:
+      description: 无人机设备更新/注册数据传输对象
+      type: object
+      properties:
+        droneName:
+          type: string
+          description: 无人机名称或型号
+        lastLng:
+          type: number
+          format: double
+          description: 最后已知经度
+        lastLat:
+          type: number
+          format: double
+          description: 最后已知纬度
+    DroneDevice:
+      description: 无人机设备实体
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 无人机设备唯一ID
+        droneName:
+          type: string
+          description: 无人机名称/别名
+        status:
+          type: integer
+          format: int32
+          description: 在线状态 (1-在线, 0-离线)
+        lastLng:
+          type: number
+          format: double
+          description: 最后上报经度
+        lastLat:
+          type: number
+          format: double
+          description: 最后上报纬度
+        createTime:
+          type: string
+          format: date-time
+          description: 设备注册时间
+        updateTime:
+          type: string
+          format: date-time
+          description: 最后状态更新时间
+    ResultDroneDevice:
+      description: 统一响应格式 (包装 DroneDevice)
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          $ref: '#/components/schemas/DroneDevice'
+    TaskQueryDTO:
+      description: 任务查询参数对象
+      type: object
+      properties:
+        taskName:
+          type: string
+          description: 按路段/任务名称模糊查询
+        droneId:
+          type: integer
+          format: int64
+          description: 按无人机ID查询
+        status:
+          type: integer
+          format: int32
+          description: 按任务状态查询 (0, 1, 2)
+        defectCount:
+          type: integer
+          format: int32
+          description: 精确匹配病害数量
+        defectCountMin:
+          type: integer
+          format: int32
+          description: 道路病害数量下限筛选
+        defectCountMax:
+          type: integer
+          format: int32
+          description: 道路病害数量上限筛选
+    ResultListInspectionTask:
+      description: 统一响应格式 (包装 InspectionTask 列表)
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          description: 道路任务列表数据
+          items:
+            $ref: '#/components/schemas/InspectionTask'
+    DefectDetail:
+      description: 道路损害详情实体
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 病害详情唯一ID
+        imageId:
+          type: integer
+          format: int64
+          description: 所属路面采集图片ID
+        defectType:
+          type: string
+          description: 道路损害类型 (如：纵向裂缝、横向裂缝、坑槽、网裂、标线模糊)
+        confidence:
+          type: number
+          format: double
+          description: AI 病害识别置信度 (0.00 ~ 1.00)
+        createTime:
+          type: string
+          format: date-time
+          description: 记录创建时间
+        updateTime:
+          type: string
+          format: date-time
+    ResultListDefectDetail:
+      description: 统一响应格式 (包装 DefectDetail 列表)
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          description: 道路损害详情列表
+          items:
+            $ref: '#/components/schemas/DefectDetail'
+    InspectionImage:
+      description: 路面采集图片及点位实体 (包含位置和病害概况)
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 图片/点位唯一ID
+        taskId:
+          type: integer
+          format: int64
+          description: 所属巡查任务ID
+        droneId:
+          type: integer
+          format: int64
+          description: 拍摄该图片的无人机ID
+        originalImageUrl:
+          type: string
+          description: 原始路面图片访问URL
+        resultImageUrl:
+          type: string
+          description: AI识别后带病害标注框的图片URL
+        rawLng:
+          type: number
+          format: double
+          description: 拍摄点原始经度
+        rawLat:
+          type: number
+          format: double
+          description: 拍摄点原始纬度
+        matchedLng:
+          type: number
+          format: double
+          description: 绑定/贴合道路高精地图后的经度
+        matchedLat:
+          type: number
+          format: double
+          description: 绑定/贴合道路高精地图后的纬度
+        isDefect:
+          type: integer
+          format: int32
+          description: 是否存在道路损害 (1-是, 0-否)
+        defectCount:
+          type: integer
+          format: int32
+          description: 该图片中包含的病害总数
+        captureTime:
+          type: string
+          format: date-time
+          description: 实际拍摄时间
+        createTime:
+          type: string
+          format: date-time
+          description: 系统入库时间
+    ResultListInspectionImage:
+      description: 统一响应格式 (包装 InspectionImage 列表)
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          description: 路面采集图片/点位列表数据
+          items:
+            $ref: '#/components/schemas/InspectionImage'
+    ResultListDroneDevice:
+      description: 统一响应格式 (包装 DroneDevice 列表)
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          description: 无人机列表数据
+          items:
+            $ref: '#/components/schemas/DroneDevice'

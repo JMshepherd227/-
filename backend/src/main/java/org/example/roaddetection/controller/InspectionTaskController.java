@@ -1,22 +1,20 @@
 package org.example.roaddetection.controller;
 
-import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.example.roaddetection.common.Result;
 import org.example.roaddetection.dto.TaskUpdateDTO;
-import org.example.roaddetection.handler.DroneWebSocketHandler;
 import org.example.roaddetection.dto.TaskQueryDTO;
 import org.example.roaddetection.entity.DroneDevice;
 import org.example.roaddetection.entity.InspectionTask;
 import org.example.roaddetection.mapper.DroneDeviceMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
+import org.example.roaddetection.service.InspectionTaskService;
 import org.springframework.beans.BeanUtils;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/tasks")
@@ -24,7 +22,7 @@ import java.util.Map;
 public class InspectionTaskController {
     private final InspectionTaskMapper inspectionTaskMapper;
     private final DroneDeviceMapper droneDeviceMapper;
-    private final DroneWebSocketHandler  webSocketHandler;
+    private final InspectionTaskService  inspectionTaskService;
 
     /**
      * 创建任务
@@ -191,44 +189,12 @@ public class InspectionTaskController {
     @PutMapping("/{droneId}/finish")
     public Result<String> taskFinish(@PathVariable Long droneId) {
         try {
-            LambdaQueryWrapper<InspectionTask> wrapper = new LambdaQueryWrapper<>();
-            wrapper.eq(InspectionTask::getDroneId, droneId)
-                    .eq(InspectionTask::getStatus, 1);
-
-            List<InspectionTask> runningTasks = inspectionTaskMapper.selectList(wrapper);
-
-            if (runningTasks.isEmpty()) {
-                return Result.fail("该无人机当前没有正在执行的任务");
-            }
-            InspectionTask taskToFinish = runningTasks.get(0);
-
-            DroneDevice drone = droneDeviceMapper.selectById(droneId);
-            if (drone == null) {
-                return Result.fail("无人机不存在");
-            }
-
-            taskToFinish.setStatus(2);
-            drone.setStatus(0);
-
-            inspectionTaskMapper.updateById(taskToFinish);
-            droneDeviceMapper.updateById(drone);
-
-            if (webSocketHandler != null) {
-                Map<String, Object> wsMessage = Map.of(
-                        "type", "task_status_update",
-                        "data", Map.of(
-                                "taskId", taskToFinish.getId(),
-                                "status", taskToFinish.getStatus(), // 2-已完成
-                                "droneId", droneId,
-                                "droneStatus", drone.getStatus()   // 0-空闲
-                        )
-                );
-                webSocketHandler.broadcastMessage(JSONUtil.toJsonStr(wsMessage));
-            }
-
-            return Result.success("任务 " + taskToFinish.getId() + " 已完成，无人机 " + droneId + " 已归位");
+            inspectionTaskService.finishTaskByDrone(droneId);
+            return Result.success("任务已结束");
+        } catch (RuntimeException e) {
+            return Result.fail(e.getMessage());
         } catch (Exception e) {
-            return Result.fail("结束任务失败: " + e.getMessage());
+            return Result.fail("系统错误：" + e.getMessage());
         }
     }
 }
