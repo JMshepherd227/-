@@ -3,8 +3,10 @@ package org.example.roaddetection.service;
 import cn.hutool.json.JSONUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.roaddetection.events.TelemetryEvent;
 import org.example.roaddetection.handler.DroneWebSocketHandler;
-import org.example.roaddetection.common.TelemetryQueue;
+import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -14,33 +16,25 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class TelemetryConsumerService {
+
     private final DroneWebSocketHandler webSocketHandler;
-    private final TelemetryQueue telemetryQueue;
 
-    public void startConsuming() {
-        Thread consumerThread = new Thread(() -> {
-            log.info("遥测数据广播消费者线程已启动...");
-            while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    Map<String, Object> telemetryData = telemetryQueue.consume();
-                    Map<String, Object> wsMessage = Map.of(
-                            "type", "telemetry",
-                            "data", List.of(telemetryData)
-                    );
-                    String jsonStr = JSONUtil.toJsonStr(wsMessage);
-                    webSocketHandler.broadcastMessage(jsonStr);
+    @Async("aiTaskExecutor")
+    @EventListener
+    public void handleTelemetryEvent(TelemetryEvent event) {
+        try {
+            log.info("监听到遥测数据事件，准备广播...");
 
-                } catch (InterruptedException e) {
-                    log.warn("遥测广播消费者线程被中断。");
-                    Thread.currentThread().interrupt();
-                } catch (Exception e) {
-                    log.error("处理遥测数据时发生未知异常", e);
-                }
-            }
-        });
+            Map<String, Object> wsMessage = Map.of(
+                    "type", "telemetry",
+                    "data", List.of(event.data())
+            );
 
-        consumerThread.setName("telemetry-consumer");
-        consumerThread.setDaemon(true);
-        consumerThread.start();
+            String jsonStr = JSONUtil.toJsonStr(wsMessage);
+            webSocketHandler.broadcastMessage(jsonStr);
+
+        } catch (Exception e) {
+            log.error("广播遥测数据时发生错误", e);
+        }
     }
 }

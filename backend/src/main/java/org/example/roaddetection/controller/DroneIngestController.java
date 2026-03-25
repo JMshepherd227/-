@@ -1,8 +1,9 @@
 package org.example.roaddetection.controller;
 
 import lombok.RequiredArgsConstructor;
-import org.example.roaddetection.common.TelemetryQueue;
+import org.example.roaddetection.events.TelemetryEvent;
 import org.example.roaddetection.service.DroneAsyncService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
@@ -12,8 +13,8 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/drones")
 @RequiredArgsConstructor
 public class DroneIngestController {
-    private final TelemetryQueue telemetryQueue;
     private final DroneAsyncService  droneAsyncService;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * 无人机位置上报
@@ -21,12 +22,11 @@ public class DroneIngestController {
     @PostMapping("/telemetry")
     public String receiveTelemetry(@RequestBody Map<String, Object> telemetryData) {
         try{
-            telemetryQueue.produce(telemetryData);
+            eventPublisher.publishEvent(new TelemetryEvent(telemetryData));
             return "{\"code\": 200, \"msg\": \"遥测数据已成功广播\"}";
         } catch (Exception e){
             return "{\"code\": 500, \"msg\": \"广播失败: " + e.getMessage() + "\"}";
         }
-
     }
 
     /**

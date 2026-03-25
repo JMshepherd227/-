@@ -1,15 +1,18 @@
 package org.example.roaddetection.entity;
 
-import cn.hutool.json.JSON;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 
 @Data
-@TableName("inspection_task")
+@TableName(value = "inspection_task", autoResultMap = true)
 public class InspectionTask {
     @TableId(type = IdType.AUTO)
     private Long id;
@@ -17,7 +20,8 @@ public class InspectionTask {
     private String taskName;
     private Long  droneId;
 
-    private JSON routePoints;
+    @TableField(typeHandler = JacksonTypeHandler.class)
+    private List<Map<String, Double>> routePoints;
     private Integer status;
 
     private LocalDateTime createTime;
