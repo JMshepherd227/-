@@ -1,9 +1,15 @@
 package org.example.roaddetection.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.RequiredArgsConstructor;
+import org.example.roaddetection.common.Result;
 import org.example.roaddetection.events.TelemetryEvent;
-import org.example.roaddetection.service.DroneAsyncService;
+import org.example.roaddetection.service.DroneService;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
@@ -13,39 +19,30 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/v1/drones")
 @RequiredArgsConstructor
 public class DroneIngestController {
-    private final DroneAsyncService  droneAsyncService;
+    private final DroneService droneService;
     private final ApplicationEventPublisher eventPublisher;
 
     /**
      * 无人机位置上报
      */
     @PostMapping("/telemetry")
-    public String receiveTelemetry(@RequestBody Map<String, Object> telemetryData) {
-        try{
-            eventPublisher.publishEvent(new TelemetryEvent(telemetryData));
-            return "{\"code\": 200, \"msg\": \"遥测数据已成功广播\"}";
-        } catch (Exception e){
-            return "{\"code\": 500, \"msg\": \"广播失败: " + e.getMessage() + "\"}";
-        }
+    public Result<String> receiveTelemetry(@RequestBody Map<String, Object> telemetryData) {
+        eventPublisher.publishEvent(new TelemetryEvent(telemetryData));
+        return Result.success("遥测数据已广播");
     }
 
-    /**
-     * 无人机抓拍图片与位置上报
-     */
-    @PostMapping("/upload")
-    public String uploadImage(
+    @Operation(summary = "无人机抓拍图片与位置上报")
+    @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Result<String> uploadImage(
             @RequestParam("taskId") Long taskId,
             @RequestParam("droneId") Long droneId,
             @RequestParam("lng") Double lng,
             @RequestParam("lat") Double lat,
-            @RequestParam("file") MultipartFile file) {
-
-        try {
-            droneAsyncService.processUploadAsync(taskId, droneId, lng, lat, file);
-            return "{\"code\": 200, \"msg\": \"图片上传与AI处理成功\"}";
-        } catch (Exception e) {
-            return "{\"code\": 500, \"msg\": \"处理失败: " + e.getMessage() + "\"}";
-        }
+            @Parameter(description = "图片文件", content = @Content(mediaType = MediaType.MULTIPART_FORM_DATA_VALUE,
+                    schema = @Schema(type = "string", format = "binary")))
+            @RequestPart("file") MultipartFile file) throws Exception {
+        droneService.processUploadSync(taskId,droneId,lng,lat,file);
+        return Result.success("图片上传成功");
     }
 }
 

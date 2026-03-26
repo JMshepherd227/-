@@ -14,7 +14,4 @@ public class TaskUpdateDTO {
 
     @TableField(typeHandler = JacksonTypeHandler.class)
     private List<Map<String, Double>> routePoints;
-    private Integer status;
-
-    private Integer defectCount;
 }

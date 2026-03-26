@@ -1,11 +1,9 @@
 package org.example.roaddetection.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.example.roaddetection.common.Result;
 import org.example.roaddetection.dto.TaskUpdateDTO;
 import org.example.roaddetection.dto.TaskQueryDTO;
-import org.example.roaddetection.entity.DroneDevice;
 import org.example.roaddetection.entity.InspectionTask;
 import org.example.roaddetection.mapper.DroneDeviceMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
@@ -21,12 +19,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class InspectionTaskController {
     private final InspectionTaskMapper inspectionTaskMapper;
-    private final DroneDeviceMapper droneDeviceMapper;
     private final InspectionTaskService  inspectionTaskService;
 
     /**
      * 创建任务
-     * @param dto 任务详情信息
+     * @param dto 任务详情信息，包含任务名称、指定无人机id、航线信息
      * @return 接口响应信息
      */
     @PostMapping("")
@@ -63,7 +60,7 @@ public class InspectionTaskController {
 
     /**
      * 修改任务
-     * @param dto 任务数据
+     * @param dto 任务数据，包含任务名称、指定无人机id、航线信息
      * @param id 任务id
      * @return 接口响应信息
      */
@@ -89,14 +86,7 @@ public class InspectionTaskController {
      */
     @GetMapping("/{id}")
     public Result<InspectionTask> getTask(@PathVariable Long id) {
-        try {
-            InspectionTask inspectionTask = inspectionTaskMapper.selectById(id);
-            if(inspectionTask==null)
-                return Result.fail("任务不存在");
-            return Result.success(inspectionTask);
-        } catch (Exception e) {
-            return Result.fail("获取失败" + e.getMessage());
-        }
+        return Result.success(inspectionTaskService.getTask(id));
     }
 
     /**
@@ -119,33 +109,7 @@ public class InspectionTaskController {
      */
     @GetMapping()
     public Result<List<InspectionTask>> getTaskList(TaskQueryDTO query) {
-        try {
-            LambdaQueryWrapper<InspectionTask> wrapper = new LambdaQueryWrapper<>();
-
-            wrapper.like(query.getTaskName()!=null,
-                    InspectionTask::getTaskName,
-                    query.getTaskName());
-            wrapper.eq(query.getDroneId()!=null,
-                    InspectionTask::getDroneId,
-                    query.getDroneId());
-            wrapper.eq(query.getStatus()!=null,
-                    InspectionTask::getStatus,
-                    query.getStatus());
-            wrapper.eq(query.getDefectCount()!=null,
-                    InspectionTask::getDefectCount,
-                    query.getDefectCount());
-            wrapper.ge(query.getDefectCountMin()!=null,
-                    InspectionTask::getDefectCount,
-                    query.getDefectCountMin());
-            wrapper.le(query.getDefectCountMax()!=null,
-                    InspectionTask::getDefectCount,
-                    query.getDefectCountMax());
-
-            List<InspectionTask> inspectionTaskList = inspectionTaskMapper.selectList(wrapper);
-            return Result.success(inspectionTaskList);
-        } catch (Exception e) {
-            return Result.fail("获取失败" + e.getMessage());
-        }
+        return Result.success(inspectionTaskService.searchTasks(query));
     }
 
     /**
@@ -156,45 +120,19 @@ public class InspectionTaskController {
     @Transactional(rollbackFor = Exception.class)
     @PutMapping("/{id}/start")
     public Result<String> taskStart(@PathVariable Long id) {
-        try {
-            InspectionTask task = inspectionTaskMapper.selectById(id);
-            if (task == null) return Result.fail("任务不存在");
-            if (task.getStatus() != 0) return Result.fail("任务非未开始状态");
-
-            DroneDevice drone = droneDeviceMapper.selectById(task.getDroneId());
-            if (drone == null) return Result.fail("无人机不存在");
-
-            if (drone.getStatus() != 0) {
-                return Result.fail("无人机 " + drone.getDroneName() + " 正在执行其他任务，请先结束该任务");
-            }
-
-            task.setStatus(1);
-            drone.setStatus(1);
-
-            inspectionTaskMapper.updateById(task);
-            droneDeviceMapper.updateById(drone);
-
-            return Result.success("任务已下发，无人机起飞中...");
-        } catch (Exception e) {
-            return Result.fail("启动失败: " + e.getMessage());
-        }
+        inspectionTaskService.startTaskByID(id);
+        return Result.success("任务已下发，无人机起飞中...");
     }
 
     /**
-     * 结束任务
+     * 结束任务，本接口由无人机调用
      * @param droneId 无人机ID
      * @return 任务响应信息
      */
     @Transactional
     @PutMapping("/{droneId}/finish")
     public Result<String> taskFinish(@PathVariable Long droneId) {
-        try {
-            inspectionTaskService.finishTaskByDrone(droneId);
-            return Result.success("任务已结束");
-        } catch (RuntimeException e) {
-            return Result.fail(e.getMessage());
-        } catch (Exception e) {
-            return Result.fail("系统错误：" + e.getMessage());
-        }
+        inspectionTaskService.finishTaskByDrone(droneId);
+        return Result.success("任务已结束");
     }
 }

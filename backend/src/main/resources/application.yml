@@ -30,9 +30,29 @@ spring:
           max-idle: 8    # 最大空闲连接
           min-idle: 0    # 最小空闲连接
 
+  task:
+    execution:
+      pool:
+        core-size: 4          # 核心线程数，建议与 CPU 核数相同
+        max-size: 8           # 最大线程数
+        queue-capacity: 100   # 队列容量，防止任务堆积导致 OOM
+        keep-alive: 60s
+      thread-name-prefix: ai-task-
+
 mybatis-plus:
   configuration:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     db-config:
       table-underline: true
+
+drone:
+  # Linux / 生产环境
+  # origin-dir: /data/uav/origin
+  # Windows 本地开发（取消注释后使用）
+  origin-dir: D:\work(work only)\python\UAVRoadDetection/origin
+
+  # Python AI 推理服务地址
+  ai-url: http://localhost:8000/predict/
+
+  ai-timeout-ms: 10000
