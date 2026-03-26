@@ -1,14 +1,12 @@
 package org.example.roaddetection.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.example.roaddetection.common.Result;
 import org.example.roaddetection.dto.TaskUpdateDTO;
 import org.example.roaddetection.dto.TaskQueryDTO;
 import org.example.roaddetection.entity.InspectionTask;
-import org.example.roaddetection.mapper.DroneDeviceMapper;
-import org.example.roaddetection.mapper.InspectionTaskMapper;
 import org.example.roaddetection.service.InspectionTaskService;
-import org.springframework.beans.BeanUtils;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,7 +16,6 @@ import java.util.List;
 @RequestMapping("/api/v1/tasks")
 @RequiredArgsConstructor
 public class InspectionTaskController {
-    private final InspectionTaskMapper inspectionTaskMapper;
     private final InspectionTaskService  inspectionTaskService;
 
     /**
@@ -26,16 +23,11 @@ public class InspectionTaskController {
      * @param dto 任务详情信息，包含任务名称、指定无人机id、航线信息
      * @return 接口响应信息
      */
+    @Transactional(rollbackFor = Exception.class)
     @PostMapping("")
     public Result<InspectionTask> taskCreate(@RequestBody TaskUpdateDTO dto) {
-        try {
-            InspectionTask inspectionTask = new InspectionTask();
-            BeanUtils.copyProperties(dto, inspectionTask);
-            inspectionTaskMapper.insert(inspectionTask);
-            return Result.success();
-        } catch (Exception e) {
-            return Result.fail("创建失败" + e.getMessage());
-        }
+        inspectionTaskService.createTask(dto);
+        return Result.success();
     }
 
     /**
@@ -43,19 +35,11 @@ public class InspectionTaskController {
      * @param id 任务id
      * @return 接口响应信息
      */
+    @Transactional(rollbackFor = Exception.class)
     @DeleteMapping("/{id}")
     public Result<InspectionTask> taskDelete(@PathVariable Long id) {
-        try {
-            if(inspectionTaskMapper.selectById(id)==null)
-                return Result.fail("任务不存在");
-            if (inspectionTaskMapper.selectById(id).getStatus() == 1) {
-                return Result.fail("任务正在执行，无法删除");
-            }
-            inspectionTaskMapper.deleteById(id);
-            return Result.success();
-        } catch (Exception e) {
-            return Result.fail("删除失败" + e.getMessage());
-        }
+        inspectionTaskService.deleteTask(id);
+        return Result.success();
     }
 
     /**
@@ -64,19 +48,11 @@ public class InspectionTaskController {
      * @param id 任务id
      * @return 接口响应信息
      */
+    @Transactional(rollbackFor = Exception.class)
     @PutMapping("/{id}")
     public Result<InspectionTask> taskUpdate(@RequestBody TaskUpdateDTO dto, @PathVariable Long id) {
-        try {
-            InspectionTask inspectionTask = new InspectionTask();
-            BeanUtils.copyProperties(dto, inspectionTask);
-            inspectionTask.setId(id);
-            if(inspectionTaskMapper.selectById(id)==null)
-                return Result.fail("任务不存在");
-            inspectionTaskMapper.updateById(inspectionTask);
-            return Result.success();
-        } catch (Exception e) {
-            return Result.fail("修改失败" + e.getMessage());
-        }
+        inspectionTaskService.updateTask(dto, id);
+        return Result.success();
     }
 
     /**
@@ -84,6 +60,7 @@ public class InspectionTaskController {
      * @param id 任务id
      * @return 接口响应信息
      */
+    @Transactional(rollbackFor = Exception.class)
     @GetMapping("/{id}")
     public Result<InspectionTask> getTask(@PathVariable Long id) {
         return Result.success(inspectionTaskService.getTask(id));
@@ -107,6 +84,7 @@ public class InspectionTaskController {
      *         code = 200 表示成功
      *         data = 任务列表
      */
+    @Transactional(rollbackFor = Exception.class)
     @GetMapping()
     public Result<List<InspectionTask>> getTaskList(TaskQueryDTO query) {
         return Result.success(inspectionTaskService.searchTasks(query));
@@ -129,7 +107,7 @@ public class InspectionTaskController {
      * @param droneId 无人机ID
      * @return 任务响应信息
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PutMapping("/{droneId}/finish")
     public Result<String> taskFinish(@PathVariable Long droneId) {
         inspectionTaskService.finishTaskByDrone(droneId);

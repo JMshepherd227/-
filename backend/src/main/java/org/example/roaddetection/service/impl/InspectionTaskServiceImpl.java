@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.roaddetection.dto.TaskQueryDTO;
+import org.example.roaddetection.dto.TaskUpdateDTO;
 import org.example.roaddetection.entity.DroneDevice;
 import org.example.roaddetection.entity.InspectionTask;
 import org.example.roaddetection.enums.DroneStatus;
@@ -13,6 +14,7 @@ import org.example.roaddetection.events.TaskFinishEvent;
 import org.example.roaddetection.mapper.DroneDeviceMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
 import org.example.roaddetection.service.InspectionTaskService;
+import org.springframework.beans.BeanUtils;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +30,9 @@ public class InspectionTaskServiceImpl extends ServiceImpl<InspectionTaskMapper,
     private final ApplicationEventPublisher publisher;
     private final InspectionTaskMapper inspectionTaskMapper;
 
+    /*
+    结束任务
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void finishTaskByDrone(Long droneId) {
@@ -66,6 +71,9 @@ public class InspectionTaskServiceImpl extends ServiceImpl<InspectionTaskMapper,
         log.info("任务已成功结束：TaskID={}, DroneID={}", task.getId(), droneId);
     }
 
+    /*
+    启动任务
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void startTaskByID(Long taskId) {
@@ -89,6 +97,9 @@ public class InspectionTaskServiceImpl extends ServiceImpl<InspectionTaskMapper,
         droneDeviceMapper.updateById(drone);
     }
 
+    /*
+    获取任务
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public InspectionTask getTask(Long taskId) {
@@ -98,6 +109,9 @@ public class InspectionTaskServiceImpl extends ServiceImpl<InspectionTaskMapper,
         return task;
     }
 
+    /*
+    按条件搜索
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public List<InspectionTask> searchTasks(TaskQueryDTO query) {
@@ -124,4 +138,44 @@ public class InspectionTaskServiceImpl extends ServiceImpl<InspectionTaskMapper,
 
         return inspectionTaskMapper.selectList(wrapper);
     }
+
+    /*
+    添加任务
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void createTask(TaskUpdateDTO dto) {
+        InspectionTask inspectionTask = new InspectionTask();
+        BeanUtils.copyProperties(dto, inspectionTask);
+        inspectionTaskMapper.insert(inspectionTask);
+    }
+
+    /*
+    修改任务
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateTask(TaskUpdateDTO dto, Long taskId) {
+        InspectionTask inspectionTask = new InspectionTask();
+        BeanUtils.copyProperties(dto, inspectionTask);
+        inspectionTask.setId(taskId);
+        if (inspectionTaskMapper.selectById(taskId) == null)
+            throw new RuntimeException("任务不存在");
+        inspectionTaskMapper.updateById(inspectionTask);
+    }
+
+    /*
+    删除任务
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteTask(Long taskId) {
+        if (inspectionTaskMapper.selectById(taskId) == null)
+            throw new RuntimeException("任务不存在");
+        else if (inspectionTaskMapper.selectById(taskId).getStatus() == TaskStatus.RUNNING.getValue())
+            throw new RuntimeException("任务执行中");
+        inspectionTaskMapper.deleteById(taskId);
+    }
+
+
 }
