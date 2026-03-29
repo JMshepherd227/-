@@ -32,4 +32,7 @@ public class InspectionImage {
 
     private LocalDateTime captureTime;
     private LocalDateTime createTime;
+
+    private String status;
+    private String errorMsg;
 }

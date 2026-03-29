@@ -1,7 +1,9 @@
 package org.example.roaddetection.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import jakarta.annotation.Resource;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.roaddetection.common.Result;
 import org.example.roaddetection.common.TileBBox;
@@ -11,6 +13,8 @@ import org.example.roaddetection.entity.InspectionImage;
 import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.InspectionImageMapper;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Collections;
@@ -22,14 +26,13 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/map")
+@RequiredArgsConstructor
 public class MapVisualizationController {
-    @Resource
-    private InspectionImageMapper inspectionImageMapper;
-    @Resource
-    private DefectDetailMapper defectDetailMapper;
-    @Resource
-    private RedisTemplate<String, Object> redisTemplate;
-
+    private final InspectionImageMapper inspectionImageMapper;
+    private final DefectDetailMapper defectDetailMapper;
+    private final RedisTemplate<String, Object> redisTemplate;
+    private final StringRedisTemplate stringRedisTemplate;
+    private final ObjectMapper objectMapper;
     /**
      *  获取视口内的病害点
      * @param z 缩放等级
@@ -46,7 +49,7 @@ public class MapVisualizationController {
         String cacheKey = String.format("map:tile:%d:%d:%d", z, x, y);
         String lockKey = "lock:" + cacheKey;
 
-        int maxRetries = 20;
+        int maxRetries = 5;
 
         TileBBox bbox = TileUtil.tileToBBox(z, x, y);
 
@@ -57,47 +60,69 @@ public class MapVisualizationController {
 
         try {
             for (int retryCount = 0; retryCount < maxRetries; retryCount++) {
-                @SuppressWarnings("unchecked")
-                List<InspectionImage> cachedData = (List<InspectionImage>) redisTemplate.opsForValue().get(cacheKey);
-                if (cachedData != null) {
+                String json = stringRedisTemplate.opsForValue().get(cacheKey);
+
+                if (json != null) {
                     log.info("命中 Redis 缓存: {}", cacheKey);
-                    return Result.success(cachedData);
+
+                    //防穿透
+                    if (json.equals("[]")) {
+                        return Result.success(Collections.emptyList());
+                    }
+
+                    try {
+                        List<InspectionImage> cachedData = objectMapper.readValue(json, new TypeReference<List<InspectionImage>>() {});
+                        return Result.success(cachedData);
+                    } catch (Exception e) {
+                        log.error("反序列化失败，删除缓存: {}", cacheKey, e);
+                        stringRedisTemplate.delete(cacheKey);
+                    }
                 }
 
                 String lockValue = UUID.randomUUID().toString();
-                Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, 10, TimeUnit.SECONDS);
+                Boolean locked = stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, 10, TimeUnit.SECONDS);
 
                 if (Boolean.TRUE.equals(locked)) {
                     log.warn("获取锁成功，未命中缓存，正在查询数据库...");
                     try {
-                        @SuppressWarnings("unchecked")
-                        List<InspectionImage> doubleCheckCache = (List<InspectionImage>) redisTemplate.opsForValue().get(cacheKey);
-                        if (doubleCheckCache != null) {
-                            return Result.success(doubleCheckCache);
-                        }
-                        //读取数据库
-                        List<InspectionImage> dbData = inspectionImageMapper.selectDefectsInViewport(minLat, maxLat, minLng, maxLng);
-                        //存入空列表，防止缓存穿透
+                        // 查询数据库
+                        List<InspectionImage> dbData =
+                                inspectionImageMapper.selectDefectsInViewport(minLat, maxLat, minLng, maxLng);
+                        // 防穿透
                         if (dbData == null || dbData.isEmpty()) {
-                            redisTemplate.opsForValue().set(cacheKey, Collections.emptyList(), 8, TimeUnit.MINUTES);
+                            stringRedisTemplate.opsForValue().set(cacheKey, "[]", 120, TimeUnit.SECONDS);
                             return Result.success(Collections.emptyList());
                         }
-                        //随机TTL
+                        // 转JSON
+                        String jsonData = objectMapper.writeValueAsString(dbData);
+                        // 随机 TTL
                         int ttl = 300 + ThreadLocalRandom.current().nextInt(60);
-                        redisTemplate.opsForValue().set(cacheKey, dbData, ttl, TimeUnit.SECONDS);
+
+                        stringRedisTemplate.opsForValue().set(cacheKey, jsonData, ttl, TimeUnit.SECONDS);
                         log.info("写入 Redis 缓存: {}", cacheKey);
 
                         return Result.success(dbData);
                     } finally {
                         // 确保只释放自己的锁
-                        Object currentLockVal = redisTemplate.opsForValue().get(lockKey);
-                        if (lockValue.equals(currentLockVal)) {
-                            redisTemplate.delete(lockKey);
-                        }
+                        String luaScript =
+                                "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+                                "   return redis.call('del', KEYS[1]) " +
+                                "else return 0 end";
+
+                        redisTemplate.execute(
+                                new DefaultRedisScript<>(luaScript, Long.class),
+                                Collections.singletonList(lockKey),
+                                lockValue
+                        );
                     }
                 } else {
                     // 没有拿到锁，说明有其他线程正在查数据库，休眠 50ms 后进入下一次 while 循环重试
-                    Thread.sleep(50);
+                    try {
+                        Thread.sleep(200);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();  // 恢复中断标志
+                        return Result.fail("查询被中断");
+                    }
                 }
             }
 

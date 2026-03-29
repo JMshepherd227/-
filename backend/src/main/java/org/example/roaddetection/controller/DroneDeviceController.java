@@ -1,26 +1,29 @@
 package org.example.roaddetection.controller;
 
-import jakarta.annotation.Resource;
+import lombok.RequiredArgsConstructor;
 import org.example.roaddetection.common.Result;
+import org.example.roaddetection.dto.DroneUpdateDTO;
 import org.example.roaddetection.entity.DroneDevice;
 import org.example.roaddetection.mapper.DroneDeviceMapper;
+import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/devices")
+@RequiredArgsConstructor
 public class DroneDeviceController {
-
-    @Resource
-    private DroneDeviceMapper droneDeviceMapper;
+    private final DroneDeviceMapper droneDeviceMapper;
 
     /**
      * 添加无人机
      */
     @PostMapping("")
-    public Result<DroneDevice> droneUpload(@RequestBody DroneDevice droneDevice) {
+    public Result<DroneDevice> droneUpload(@RequestBody DroneUpdateDTO dto) {
         try {
+            DroneDevice droneDevice = new DroneDevice();
+            BeanUtils.copyProperties(dto, droneDevice);
             droneDeviceMapper.insert(droneDevice);
             return Result.success();
         } catch (Exception e) {
@@ -47,10 +50,12 @@ public class DroneDeviceController {
      *修改无人机信息
      */
     @PutMapping("/{id}")
-    public Result<DroneDevice> droneUpdate(@RequestBody DroneDevice droneDevice, @PathVariable Long id) {
+    public Result<DroneDevice> droneUpdate(@RequestBody DroneUpdateDTO dto, @PathVariable Long id) {
         try {
             if(droneDeviceMapper.selectById(id)==null)
                 return Result.fail("id不存在");
+            DroneDevice droneDevice = new DroneDevice();
+            BeanUtils.copyProperties(dto, droneDevice);
             droneDevice.setId(id);
             droneDeviceMapper.updateById(droneDevice);
             return Result.success();
