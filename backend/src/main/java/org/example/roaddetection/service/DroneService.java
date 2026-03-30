@@ -1,5 +1,6 @@
 package org.example.roaddetection.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.roaddetection.events.AiResultEvent;
@@ -18,10 +19,15 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import cn.hutool.json.JSONUtil;
+import org.example.roaddetection.entity.DefectEntity;
+import org.example.roaddetection.mapper.DefectEntityMapper;
+import org.example.roaddetection.util.FeatureUtil;
 
 import java.io.File;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -35,6 +41,7 @@ public class DroneService {
     private final ApplicationEventPublisher publisher;
     private final DroneAsyncService droneAsyncService;
     private final initImageService initImageService;
+    private final DefectEntityMapper entityMapper;
 
     @Value("${drone.origin-dir}")
     private String originDir;
@@ -123,7 +130,7 @@ public class DroneService {
         imageMapper.updateById(image);
 
         if (hasDefect) {
-            saveDefectDetails(imageId, aiResult);
+            saveDefectDetails(imageId, lng, lat, aiResult);
             inspectionTaskMapper.increaseDefectCount(taskId, aiResult.getDetections_num());
             publisher.publishEvent(new DefectDetectedEvent(taskId, lng, lat, aiResult, resultUrl));
             log.info("【检测完成】发现病害 {} 处，图片ID: {}", aiResult.getDetections_num(), imageId);
@@ -135,15 +142,70 @@ public class DroneService {
     /**
      * 保存病害详情列表
      */
-    private void saveDefectDetails(Long imageId, AiPredictResponse aiResult) {
+    private void saveDefectDetails(Long imageId, Double currentLng, Double currentLat, AiPredictResponse aiResult) {
         if (aiResult.getDetections() == null || aiResult.getDetections().isEmpty()) {
             return;
         }
+
+        // 1. 【粗筛】范围查找 (约 5-10 米)
+        double range = 0.0001;
+        List<DefectEntity> nearbyEntities = entityMapper.selectList(
+                new LambdaQueryWrapper<DefectEntity>()
+                        .between(DefectEntity::getLng, currentLng - range, currentLng + range)
+                        .between(DefectEntity::getLat, currentLat - range, currentLat + range)
+        );
+
         for (AiDetectionItem item : aiResult.getDetections()) {
+            Long matchedEntityId = null;
+
+            // 2. 【细筛】特征比对
+            for (DefectEntity entity : nearbyEntities) {
+                // 查找该实体关联的最新一条详情
+                DefectDetail lastDetail = detailMapper.selectOne(
+                        new LambdaQueryWrapper<DefectDetail>()
+                                .eq(DefectDetail::getEntityId, entity.getId())
+                                .orderByDesc(DefectDetail::getId) // 按ID倒序取最新的
+                                .last("LIMIT 1")
+                );
+
+                if (lastDetail != null && lastDetail.getFeatureVector() != null) {
+                    // --- 使用 Hutool 解析 JSON ---
+                    List<Float> oldFeature = JSONUtil.toList(lastDetail.getFeatureVector(), Float.class);
+
+                    double similarity = FeatureUtil.cosineSimilarity(item.getFeature(), oldFeature);
+
+                    if (similarity > 0.85) { // 阈值可以根据实际测试微调
+                        matchedEntityId = entity.getId();
+                        log.info("【匹配成功】实体ID: {}, 相似度: {}", matchedEntityId, similarity);
+                        break;
+                    }
+                }
+            }
+
+            // 3. 【决策】
+            if (matchedEntityId == null) {
+                DefectEntity newEntity = new DefectEntity();
+                newEntity.setDefectType(item.getClass_name());
+                newEntity.setLng(currentLng);
+                newEntity.setLat(currentLat);
+                newEntity.setStatus("ACTIVE");
+                newEntity.setCreateTime(LocalDateTime.now());
+                entityMapper.insert(newEntity);
+                matchedEntityId = newEntity.getId();
+            }
+
+            // 4. 保存详情
             DefectDetail detail = new DefectDetail();
             detail.setImageId(imageId);
+            detail.setEntityId(matchedEntityId);
             detail.setDefectType(item.getClass_name());
             detail.setConfidence(item.getConfidence());
+
+            // --- 使用 Hutool 序列化 JSON ---
+            detail.setBbox(JSONUtil.toJsonStr(item.getBbox()));
+            detail.setFeatureVector(JSONUtil.toJsonStr(item.getFeature()));
+
+            detail.setCreateTime(LocalDateTime.now());
             detailMapper.insert(detail);
         }
     }
