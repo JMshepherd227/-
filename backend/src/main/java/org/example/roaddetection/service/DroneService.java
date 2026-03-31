@@ -3,12 +3,14 @@ package org.example.roaddetection.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.roaddetection.Listener.RoadInfoListener;
 import org.example.roaddetection.events.AiResultEvent;
 import org.example.roaddetection.events.DefectDetectedEvent;
 import org.example.roaddetection.dto.AiDetectionItem;
 import org.example.roaddetection.dto.AiPredictResponse;
 import org.example.roaddetection.entity.DefectDetail;
 import org.example.roaddetection.entity.InspectionImage;
+import org.example.roaddetection.events.RoadInfoUpdateEvent;
 import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.InspectionImageMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
@@ -30,6 +32,7 @@ import java.io.File;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -40,10 +43,12 @@ public class DroneService {
     private final InspectionImageMapper imageMapper;
     private final DefectDetailMapper detailMapper;
     private final InspectionTaskMapper inspectionTaskMapper;
-    private final ApplicationEventPublisher publisher;
+    private final DefectEntityMapper entityMapper;
+
     private final DroneAsyncService droneAsyncService;
     private final initImageService initImageService;
-    private final DefectEntityMapper entityMapper;
+
+    private final ApplicationEventPublisher publisher;
 
     @Value("${drone.origin-dir}")
     private String originDir;
@@ -131,7 +136,8 @@ public class DroneService {
     /**
      * 保存病害详情列表
      */
-    private void saveDefectDetails(Long imageId, AiResultEvent event) {
+    @Transactional(rollbackFor = Exception.class)
+    public void saveDefectDetails(Long imageId, AiResultEvent event) {
         AiPredictResponse aiResult = event.getAiResult();
         if (aiResult.getDetections() == null || aiResult.getDetections().isEmpty()) {
             return;
@@ -149,7 +155,7 @@ public class DroneService {
             double[] realGps = GpsOffsetUtil.calculateRealGps(
                     event.getLng(), event.getLat(), event.getYaw(),
                     event.getAltitude(), event.getFov(),
-                    aiResult.getImage_width(), aiResult.getImage_height(), item.getBbox()
+                    aiResult.getImageWidth(), aiResult.getImageHeight(), item.getBbox()
             );
             double realLng = realGps[0];
             double realLat = realGps[1];
@@ -203,6 +209,13 @@ public class DroneService {
             detail.setFeatureVector(JSONUtil.toJsonStr(item.getFeature()));
 
             detail.setCreateTime(LocalDateTime.now());
+
+            detail.setRoadName("解析中");
+            detail.setAddress("解析中");
+            detail.setAddressDetail("解析中");
+
+            publisher.publishEvent(new RoadInfoUpdateEvent(imageId, event.getLng(), event.getLat()));
+
             detailMapper.insert(detail);
         }
     }

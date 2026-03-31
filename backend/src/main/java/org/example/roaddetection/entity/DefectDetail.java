@@ -20,4 +20,7 @@ public class DefectDetail {
     private String bbox;
     private String featureVector;
     private LocalDateTime createTime;
+    private String roadName;
+    private String address;
+    private String addressDetail;
 }

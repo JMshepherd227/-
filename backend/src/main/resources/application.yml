@@ -56,3 +56,6 @@ drone:
   ai-url: http://localhost:8000/predict/
 
   ai-timeout-ms: 10000
+
+amap:
+  key: ffb3478b5762d310a9ba4baa8dd157e6
