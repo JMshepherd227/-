@@ -8,6 +8,7 @@ import org.example.roaddetection.mapper.DroneDeviceMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
 import org.example.roaddetection.service.DeviceService;
 import org.springframework.beans.BeanUtils;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -23,6 +24,7 @@ public class DroneDeviceController {
      * 添加无人机
      */
     @PostMapping("")
+    @Transactional(rollbackFor = Exception.class)
     public Result<DroneDevice> droneUpload(@RequestBody DroneUpdateDTO dto) {
         deviceService.createDrone(dto);
         return Result.success();
@@ -31,6 +33,7 @@ public class DroneDeviceController {
      * 删除无人机
      */
     @DeleteMapping("/{id}")
+    @Transactional(rollbackFor = Exception.class)
     public Result<DroneDevice> droneDelete(@PathVariable Long id) {
         deviceService.deleteDrone(id);
         return Result.success();
@@ -39,6 +42,7 @@ public class DroneDeviceController {
      *修改无人机信息
      */
     @PutMapping("/{id}")
+    @Transactional(rollbackFor = Exception.class)
     public Result<DroneDevice> droneUpdate(@RequestBody DroneUpdateDTO dto, @PathVariable Long id) {
         deviceService.updateDrone(dto, id);
         return Result.success();
@@ -47,6 +51,7 @@ public class DroneDeviceController {
      *获取无人机信息
      */
     @GetMapping("/{id}")
+    @Transactional(rollbackFor = Exception.class)
     public Result<DroneDevice> getDrone(@PathVariable Long id) {
         DroneDevice droneDevice = deviceService.getDrone(id);
         return Result.success(droneDevice);
@@ -55,6 +60,7 @@ public class DroneDeviceController {
      *无人机列表获取
      */
     @GetMapping("")
+    @Transactional(rollbackFor = Exception.class)
     public Result<List<DroneDevice>> getDroneList() {
         List<DroneDevice> droneDevices = deviceService.getDroneList();
         return Result.success(droneDevices);

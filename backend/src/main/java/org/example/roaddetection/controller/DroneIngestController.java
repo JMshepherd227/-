@@ -6,6 +6,7 @@ import org.example.roaddetection.events.TelemetryEvent;
 import org.example.roaddetection.service.DroneService;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
@@ -25,6 +26,7 @@ public class DroneIngestController {
     }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Transactional(rollbackFor = Exception.class)
     public Result<String> uploadImage(
             @RequestParam("taskId") Long taskId,
             @RequestParam("droneId") Long droneId,
