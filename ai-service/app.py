@@ -8,10 +8,20 @@ import io
 import os
 import datetime
 import uuid
+from pathlib import Path
 
 app = FastAPI()
 
-model = YOLO("D:/work(work only)/python/UAVRoadDetection/ai-service/best.pt")
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BASE_DIR.parent
+
+MODEL_PATH = Path(os.getenv("MODEL_PATH", str(BASE_DIR / "best.pt"))).resolve()
+RESULT_ROOT = Path(os.getenv("RESULT_DIR", str(PROJECT_DIR / "result"))).resolve()
+
+if not MODEL_PATH.exists():
+    raise RuntimeError(f"YOLO 权重文件不存在: {MODEL_PATH}")
+
+model = YOLO(str(MODEL_PATH))
 
 class DetectionItem(BaseModel):
     class_id: int
@@ -35,14 +45,13 @@ async def predict(
         results = model.predict(source=image, save=False, conf=0.25)
         r = results[0]
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        dir_name = "D:/work(work only)/python/UAVRoadDetection/result"
-        save_dir = os.path.join(dir_name, today)
-        os.makedirs(save_dir, exist_ok=True)
+        save_dir = RESULT_ROOT / today
+        save_dir.mkdir(parents=True, exist_ok=True)
 
         unique_id = uuid.uuid4().hex[:8]
         filename = f"{unique_id}.jpg"
 
-        full_save_path = os.path.join(save_dir, filename)
+        full_save_path = save_dir / filename
 
         detections = []
         detections_num = len(r.boxes)
@@ -50,7 +59,7 @@ async def predict(
 
         if len(results) > 0:
             result_img = r.plot()
-            cv2.imwrite(full_save_path, result_img)
+            cv2.imwrite(str(full_save_path), result_img)
             class_ids = r.boxes.cls.cpu().numpy().astype(int)
             confidences = r.boxes.conf.cpu().numpy()
             for cid, conf in zip(class_ids, confidences):
@@ -63,9 +72,9 @@ async def predict(
                 )
         else:
             import numpy as np
-            cv2.imwrite(full_save_path, cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR))
+            cv2.imwrite(str(full_save_path), cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR))
 
-        relative_path = f"{dir_name}/{today}/{filename}"
+        relative_path = f"result/{today}/{filename}"
 
         return PredictResponse(
             filePath=relative_path,
