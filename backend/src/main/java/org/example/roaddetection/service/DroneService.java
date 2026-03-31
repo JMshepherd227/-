@@ -12,6 +12,7 @@ import org.example.roaddetection.entity.InspectionImage;
 import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.InspectionImageMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
+import org.example.roaddetection.util.GpsOffsetUtil;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
@@ -49,7 +50,9 @@ public class DroneService {
     /**
      * 【主线程同步入口】：处理文件上传、本地保存、数据库初始化占位，
      */
-    public void processUploadSync(Long taskId, Long droneId, Double lng, Double lat, MultipartFile file) throws Exception {
+    public void processUploadSync(Long taskId, Long droneId, Double lng, Double lat,
+                                  Double altitude, Double yaw, Double pitch, Double fov,
+                                  MultipartFile file) throws Exception {
         log.info("【图片接收】无人机:{} 坐标:({}, {})", droneId, lng, lat);
         LocalDateTime now = LocalDateTime.now();
 
@@ -57,7 +60,7 @@ public class DroneService {
         String originalUrl = extractRelativePath(originalAbsolutePath, "origin/");
         Long imageId = initImageService.initImageRecord(taskId, droneId, lng, lat, originalUrl, now);
 
-        droneAsyncService.processAiAsync(imageId, originalAbsolutePath, taskId, lng, lat);
+        droneAsyncService.processAiAsync(imageId, originalAbsolutePath, taskId, lng, lat, altitude, yaw, pitch, fov);
     }
 
 
@@ -69,8 +72,7 @@ public class DroneService {
     @Transactional(rollbackFor = Exception.class)
     public void onAiResult(AiResultEvent event) {
         if (event.isSuccess()) {
-            saveDetectionResult(event.getImageId(), event.getTaskId(),
-                    event.getLng(), event.getLat(), event.getAiResult());
+            saveDetectionResult(event);
         } else {
             markAsFailed(event.getImageId(), event.getErrorMsg());
         }
@@ -112,10 +114,11 @@ public class DroneService {
     /**
      * AI 处理成功后，将检测结果写入数据库。
      */
-    private void saveDetectionResult(Long imageId, Long taskId, Double lng, Double lat,
-                                     AiPredictResponse aiResult) {
+    private void saveDetectionResult(AiResultEvent event) {
+        AiPredictResponse aiResult = event.getAiResult();
+        Long imageId = event.getImageId();
         boolean hasDefect = aiResult.getDetections_num() > 0;
-        String resultUrl = extractRelativePath(aiResult.getFilePath(), "result/");
+        String resultUrl = extractRelativePath(event.getAiResult().getFilePath(), "result/");
 
         InspectionImage image = imageMapper.selectById(imageId);
         if (image == null) {
@@ -130,9 +133,9 @@ public class DroneService {
         imageMapper.updateById(image);
 
         if (hasDefect) {
-            saveDefectDetails(imageId, lng, lat, aiResult);
-            inspectionTaskMapper.increaseDefectCount(taskId, aiResult.getDetections_num());
-            publisher.publishEvent(new DefectDetectedEvent(taskId, lng, lat, aiResult, resultUrl));
+            saveDefectDetails(imageId, event);
+            inspectionTaskMapper.increaseDefectCount(event.getTaskId(), aiResult.getDetections_num());
+            publisher.publishEvent(new DefectDetectedEvent(event.getTaskId(), event.getLng(), event.getLat(), event.getAiResult(), resultUrl));
             log.info("【检测完成】发现病害 {} 处，图片ID: {}", aiResult.getDetections_num(), imageId);
         } else {
             log.info("【检测通过】该坐标无病害，图片ID: {}", imageId);
@@ -142,7 +145,8 @@ public class DroneService {
     /**
      * 保存病害详情列表
      */
-    private void saveDefectDetails(Long imageId, Double currentLng, Double currentLat, AiPredictResponse aiResult) {
+    private void saveDefectDetails(Long imageId, AiResultEvent event) {
+        AiPredictResponse aiResult = event.getAiResult();
         if (aiResult.getDetections() == null || aiResult.getDetections().isEmpty()) {
             return;
         }
@@ -151,11 +155,18 @@ public class DroneService {
         double range = 0.0001;
         List<DefectEntity> nearbyEntities = entityMapper.selectList(
                 new LambdaQueryWrapper<DefectEntity>()
-                        .between(DefectEntity::getLng, currentLng - range, currentLng + range)
-                        .between(DefectEntity::getLat, currentLat - range, currentLat + range)
+                        .between(DefectEntity::getLng, event.getLng() - range, event.getLng() + range)
+                        .between(DefectEntity::getLat, event.getLat() - range, event.getLat() + range)
         );
 
         for (AiDetectionItem item : aiResult.getDetections()) {
+            double[] realGps = GpsOffsetUtil.calculateRealGps(
+                    event.getLng(), event.getLat(), event.getYaw(),
+                    event.getAltitude(), event.getFov(),
+                    aiResult.getImage_width(), aiResult.getImage_height(), item.getBbox()
+            );
+            double realLng = realGps[0];
+            double realLat = realGps[1];
             Long matchedEntityId = null;
 
             // 2. 【细筛】特征比对
@@ -164,7 +175,7 @@ public class DroneService {
                 DefectDetail lastDetail = detailMapper.selectOne(
                         new LambdaQueryWrapper<DefectDetail>()
                                 .eq(DefectDetail::getEntityId, entity.getId())
-                                .orderByDesc(DefectDetail::getId) // 按ID倒序取最新的
+                                .orderByDesc(DefectDetail::getId)
                                 .last("LIMIT 1")
                 );
 
@@ -174,7 +185,7 @@ public class DroneService {
 
                     double similarity = FeatureUtil.cosineSimilarity(item.getFeature(), oldFeature);
 
-                    if (similarity > 0.85) { // 阈值可以根据实际测试微调
+                    if (similarity > 0.85) {
                         matchedEntityId = entity.getId();
                         log.info("【匹配成功】实体ID: {}, 相似度: {}", matchedEntityId, similarity);
                         break;
@@ -186,8 +197,8 @@ public class DroneService {
             if (matchedEntityId == null) {
                 DefectEntity newEntity = new DefectEntity();
                 newEntity.setDefectType(item.getClass_name());
-                newEntity.setLng(currentLng);
-                newEntity.setLat(currentLat);
+                newEntity.setLng(realLng);
+                newEntity.setLat(realLat);
                 newEntity.setStatus("ACTIVE");
                 newEntity.setCreateTime(LocalDateTime.now());
                 entityMapper.insert(newEntity);

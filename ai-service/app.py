@@ -42,6 +42,8 @@ class PredictResponse(BaseModel):
     detections: List[DetectionItem]
     detections_num: int
     message: str
+    image_width:int
+    image_height:int
 
 def extract_feature(cv2_img, bbox):
     """
@@ -70,6 +72,7 @@ async def predict(
     try:
         contents = await file.read()
         image = Image.open(io.BytesIO(contents)).convert("RGB")
+        width, height = image.size
 
         results = model.predict(source=image, save=False, conf=0.25)
         r = results[0]
@@ -118,7 +121,9 @@ async def predict(
             filePath=relative_path,
             detections=detections,
             detections_num=detections_num,
-            message="Success"
+            message="Success",
+            image_width=width,
+            image_height=height
         )
 
     except Exception as e:
