@@ -15,6 +15,7 @@ public class AiResultEvent extends ApplicationEvent {
     private final Double altitude;
     private final Double yaw;
     private final Double pitch;
+    private final Double roll;
     private final Double fov;
 
     private final AiPredictResponse aiResult;
@@ -24,7 +25,7 @@ public class AiResultEvent extends ApplicationEvent {
     private final boolean success;
 
     public AiResultEvent(Object source, Long imageId, Long taskId,
-                         Double lng, Double lat, Double altitude, Double yaw, Double pitch, Double fov,
+                         Double lng, Double lat, Double altitude, Double yaw, Double pitch, Double roll, Double fov,
                          AiPredictResponse aiResult) {
         super(source);
         this.imageId = imageId;
@@ -34,6 +35,7 @@ public class AiResultEvent extends ApplicationEvent {
         this.altitude = altitude;
         this.yaw = yaw;
         this.pitch = pitch;
+        this.roll = roll;
         this.fov = fov;
         this.aiResult = aiResult;
         this.success = true;
@@ -50,6 +52,7 @@ public class AiResultEvent extends ApplicationEvent {
         this.altitude = null;
         this.yaw = null;
         this.pitch = null;
+        this.roll = null;
         this.fov = null;
         this.errorMsg = errorMsg;
         this.success = false;

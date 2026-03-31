@@ -32,7 +32,7 @@ public class DroneAsyncService {
      */
     @Async("aiTaskExecutor")
     public void processAiAsync(Long imageId, String absolutePath, Long taskId,
-                               Double lng, Double lat, Double altitude, Double yaw, Double pitch, Double fov) {
+                               Double lng, Double lat, Double altitude, Double yaw, Double pitch, Double roll, Double fov) {
         log.info("【AI处理开始】图片ID: {}, 本地路径: {}", imageId, absolutePath);
 
         try {
@@ -43,7 +43,7 @@ public class DroneAsyncService {
 
             AiPredictResponse aiResult = callAiService(file);
 
-            publisher.publishEvent(new AiResultEvent(this, imageId, taskId, lng, lat, altitude, yaw, pitch, fov, aiResult));
+            publisher.publishEvent(new AiResultEvent(this, imageId, taskId, lng, lat, altitude, yaw, pitch, roll, fov, aiResult));
             log.info("【AI处理完成】图片ID: {}, 检测数量: {}", imageId, aiResult.getDetections_num());
 
         } catch (Exception e) {

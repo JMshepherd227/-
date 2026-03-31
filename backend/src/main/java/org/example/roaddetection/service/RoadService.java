@@ -36,37 +36,43 @@ public class RoadService {
             if ("1".equals(jsonObj.getStr("status"))) {
                 cn.hutool.json.JSONObject regeocode = jsonObj.getJSONObject("regeocode");
 
-                String formattedAddress = regeocode.getStr("formatted_address");
-                roadInfo.put("address", formattedAddress);
-
+                // 1. 获取主路名
+                String roadName = "未知路段";
                 cn.hutool.json.JSONArray roads = regeocode.getJSONArray("roads");
-                String bestRoadName = "未知路段";
                 if (roads != null && !roads.isEmpty()) {
-                    cn.hutool.json.JSONObject nearestRoad = roads.getJSONObject(0);
-                    bestRoadName = nearestRoad.getStr("name");
-                } else {
-                    cn.hutool.json.JSONObject addressComponent = regeocode.getJSONObject("addressComponent");
-                    cn.hutool.json.JSONObject streetNumber = addressComponent.getJSONObject("streetNumber");
-                    if (streetNumber != null && cn.hutool.core.util.StrUtil.isNotBlank(streetNumber.getStr("street"))) {
-                        bestRoadName = streetNumber.getStr("street");
-                    }
+                    roadName = roads.getJSONObject(0).getStr("name");
                 }
-                roadInfo.put("roadName", bestRoadName);
+                roadInfo.put("roadName", roadName);
 
-                cn.hutool.json.JSONArray crosses = regeocode.getJSONArray("roadinters");
-                if (crosses != null && !crosses.isEmpty()) {
-                    cn.hutool.json.JSONObject nearestCross = crosses.getJSONObject(0);
-                    String firstName = nearestCross.getStr("first_name");
-                    String secondName = nearestCross.getStr("second_name");
-                    String distance = nearestCross.getStr("distance");
-                    String direction = nearestCross.getStr("direction");
+                String detailLocation = "";
 
-                    String exactLocation = String.format("%s (距【与%s交叉口】向%s %s米)",
-                            firstName, secondName, direction, distance);
-                    roadInfo.put("detail", exactLocation);
-                } else {
-                    roadInfo.put("detail", bestRoadName);
+                // 第一优先级：交叉路口
+                cn.hutool.json.JSONArray roadinters = regeocode.getJSONArray("roadinters");
+                if (roadinters != null && !roadinters.isEmpty()) {
+                    cn.hutool.json.JSONObject inter = roadinters.getJSONObject(0);
+                    detailLocation = String.format("%s (距【与%s交叉口】向%s %s米)",
+                            inter.getStr("first_name"), inter.getStr("second_name"),
+                            inter.getStr("direction"), inter.getStr("distance"));
                 }
+                // 第二优先级：AOI 区域
+                else if (regeocode.getJSONArray("aois") != null && !regeocode.getJSONArray("aois").isEmpty()) {
+                    cn.hutool.json.JSONObject aoi = regeocode.getJSONArray("aois").getJSONObject(0);
+                    detailLocation = String.format("%s (位于【%s】附近约 %s米)",
+                            roadName, aoi.getStr("name"), aoi.getStr("distance"));
+                }
+                // 第三优先级：POI 点
+                else if (regeocode.getJSONArray("pois") != null && !regeocode.getJSONArray("pois").isEmpty()) {
+                    cn.hutool.json.JSONObject poi = regeocode.getJSONArray("pois").getJSONObject(0);
+                    detailLocation = String.format("%s (距【%s】约 %s米)",
+                            roadName, poi.getStr("name"), poi.getStr("distance"));
+                }
+                // 第四优先级
+                else {
+                    detailLocation = regeocode.getStr("formatted_address");
+                }
+
+                roadInfo.put("detail", detailLocation);
+                roadInfo.put("address", regeocode.getStr("formatted_address"));
             } else {
                 log.error("高德 API 报错，状态码: {}, 错误信息: {}", jsonObj.getStr("infocode"), jsonObj.getStr("info"));
             }

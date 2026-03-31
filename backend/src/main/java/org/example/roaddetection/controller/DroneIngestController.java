@@ -35,9 +35,10 @@ public class DroneIngestController {
             @RequestParam("altitude") Double altitude,
             @RequestParam("yaw") Double yaw,
             @RequestParam("pitch") Double pitch,
+            @RequestParam("roll") Double roll,
             @RequestParam("fov") Double fov,
             @RequestPart("file") MultipartFile file) throws Exception {
-        droneService.processUploadSync(taskId, droneId, lng, lat, altitude, yaw, pitch, fov, file);
+        droneService.processUploadSync(taskId, droneId, lng, lat, altitude, yaw, pitch, roll, fov, file);
         return Result.success("图片上传成功");
     }
 }

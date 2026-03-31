@@ -56,8 +56,15 @@ public class DroneService {
     /**
      * 【主线程同步入口】：处理文件上传、本地保存、数据库初始化占位
      */
-    public void processUploadSync(Long taskId, Long droneId, Double lng, Double lat,
-                                  Double altitude, Double yaw, Double pitch, Double fov,
+    public void processUploadSync(Long taskId,
+                                  Long droneId,
+                                  Double lng,
+                                  Double lat,
+                                  Double altitude,
+                                  Double yaw,
+                                  Double pitch,
+                                  Double roll,
+                                  Double fov,
                                   MultipartFile file) throws Exception {
         log.info("【图片接收】无人机:{} 坐标:({}, {})", droneId, lng, lat);
         LocalDateTime now = LocalDateTime.now();
@@ -66,7 +73,7 @@ public class DroneService {
         String originalUrl = PathUtil.extractRelativePath(originalAbsolutePath, "origin/");
         Long imageId = initImageService.initImageRecord(taskId, droneId, lng, lat, originalUrl, now);
 
-        droneAsyncService.processAiAsync(imageId, originalAbsolutePath, taskId, lng, lat, altitude, yaw, pitch, fov);
+        droneAsyncService.processAiAsync(imageId, originalAbsolutePath, taskId, lng, lat, altitude, yaw, pitch, roll, fov);
     }
 
 
@@ -153,9 +160,16 @@ public class DroneService {
 
         for (AiDetectionItem item : aiResult.getDetections()) {
             double[] realGps = GpsOffsetUtil.calculateRealGps(
-                    event.getLng(), event.getLat(), event.getYaw(),
-                    event.getAltitude(), event.getFov(),
-                    aiResult.getImageWidth(), aiResult.getImageHeight(), item.getBbox()
+                    event.getLng(),
+                    event.getLat(),
+                    event.getYaw(),
+                    event.getPitch(),
+                    event.getRoll(),
+                    event.getAltitude(),
+                    event.getFov(),
+                    aiResult.getImageWidth(),
+                    aiResult.getImageHeight(),
+                    item.getBbox()
             );
             double realLng = realGps[0];
             double realLat = realGps[1];
