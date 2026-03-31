@@ -13,6 +13,7 @@ import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.InspectionImageMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
 import org.example.roaddetection.util.GpsOffsetUtil;
+import org.example.roaddetection.util.PathUtil;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
@@ -48,7 +49,7 @@ public class DroneService {
     private String originDir;
 
     /**
-     * 【主线程同步入口】：处理文件上传、本地保存、数据库初始化占位，
+     * 【主线程同步入口】：处理文件上传、本地保存、数据库初始化占位
      */
     public void processUploadSync(Long taskId, Long droneId, Double lng, Double lat,
                                   Double altitude, Double yaw, Double pitch, Double fov,
@@ -57,7 +58,7 @@ public class DroneService {
         LocalDateTime now = LocalDateTime.now();
 
         String originalAbsolutePath = saveOriginalImage(file);
-        String originalUrl = extractRelativePath(originalAbsolutePath, "origin/");
+        String originalUrl = PathUtil.extractRelativePath(originalAbsolutePath, "origin/");
         Long imageId = initImageService.initImageRecord(taskId, droneId, lng, lat, originalUrl, now);
 
         droneAsyncService.processAiAsync(imageId, originalAbsolutePath, taskId, lng, lat, altitude, yaw, pitch, fov);
@@ -65,7 +66,7 @@ public class DroneService {
 
 
     /**
-     * 监听 AI 处理结果事件。
+     * 监听 AI 处理结果事件
      */
     @Async("aiTaskExecutor")
     @EventListener
@@ -97,28 +98,13 @@ public class DroneService {
     }
 
     /**
-     * 从绝对路径中提取相对路径
-     */
-    public String extractRelativePath(String path, String keyword) {
-        if (path == null || path.isBlank()) {
-            throw new IllegalArgumentException("路径不能为空");
-        }
-        int index = path.indexOf(keyword);
-        if (index == -1) {
-            throw new IllegalArgumentException(
-                    "路径 [" + path + "] 中未找到关键字 [" + keyword + "]，请检查目录配置是否正确");
-        }
-        return path.substring(index);
-    }
-
-    /**
-     * AI 处理成功后，将检测结果写入数据库。
+     * AI 处理成功后，将检测结果写入数据库
      */
     private void saveDetectionResult(AiResultEvent event) {
         AiPredictResponse aiResult = event.getAiResult();
         Long imageId = event.getImageId();
         boolean hasDefect = aiResult.getDetections_num() > 0;
-        String resultUrl = extractRelativePath(event.getAiResult().getFilePath(), "result/");
+        String resultUrl = PathUtil.extractRelativePath(event.getAiResult().getFilePath(), "result/");
 
         InspectionImage image = imageMapper.selectById(imageId);
         if (image == null) {
@@ -222,7 +208,7 @@ public class DroneService {
     }
 
     /**
-     * AI 处理失败时，将图片记录标记为失败状态并记录错误原因。
+     * AI 处理失败时，将图片记录标记为失败状态并记录错误原因
      */
     @Transactional(rollbackFor = Exception.class)
     public void markAsFailed(Long imageId, String errorMsg) {
