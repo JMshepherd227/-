@@ -1,5 +1,5 @@
+import json
 from typing import List
-
 import torch
 from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
@@ -19,23 +19,91 @@ model = YOLO("D:/work(work only)/python/UAVRoadDetection/ai-service/best.pt")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 reid_model = models.resnet18(pretrained=True)
-reid_model = torch.nn.Sequential(*(list(reid_model.children())[:-1])) # 移除最后的全连接层
+reid_model = torch.nn.Sequential(*(list(reid_model.children())[:-1]))
 reid_model.to(device)
 reid_model.eval()
 
-# 图片预处理逻辑（缩放到模型需要的大小）
 preprocess = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
+
+def extract_hu_feature(crop_bgr: np.ndarray) -> List[float]:
+    """
+    提取结构特征：Hu 矩
+    输入：BGR 格式的裁剪图像
+    输出：拼接后的结构特征向量
+    """
+    # --- 预处理：统一缩放，避免尺寸影响特征 ---
+    resized = cv2.resize(crop_bgr, (128, 128))
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+
+    # --- Canny 边缘检测 ---
+    gray = cv2.equalizeHist(gray)
+    edges = cv2.Canny(gray, threshold1=50, threshold2=150)
+
+    # --- Hu 矩（7维，对旋转/缩放/平移不变）---
+    moments = cv2.moments(edges)
+    hu_moments = cv2.HuMoments(moments).flatten()
+    # log 变换压缩数值范围，避免数量级差异过大
+    hu_moments = -np.sign(hu_moments) * np.log10(np.abs(hu_moments) + 1e-10)
+    hu_moments = hu_moments.tolist()
+
+    return hu_moments
+
+
+def extract_lbp_feature(crop_bgr: np.ndarray) -> List[float]:
+    """
+    提取 LBP 纹理特征
+    使用 uniform LBP，59 维，对光照变化鲁棒
+    """
+    from skimage.feature import local_binary_pattern
+
+    resized = cv2.resize(crop_bgr, (128, 128))
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+
+    # 直方图均衡化（消除光照影响）
+    gray = cv2.equalizeHist(gray)
+
+    # uniform LBP：P=8邻域，R=1半径
+    # uniform 模式将编码归并为 59 类，降低噪声敏感性
+    lbp = local_binary_pattern(gray, P=8, R=1, method='uniform')
+
+    # 统计直方图（归一化）
+    hist, _ = np.histogram(lbp.ravel(), bins=59, range=(0, 59), density=True)
+
+    return hist.tolist()  # 59 维
+
+def extract_feature(cv2_img: np.ndarray, bbox: List[float]) -> dict:
+    x1, y1, x2, y2 = map(int, bbox)
+    crop = cv2_img[max(0, y1):y2, max(0, x1):x2]
+    if crop.size == 0:
+        return ""
+
+    # 深度特征
+    crop_pil = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+    input_tensor = preprocess(crop_pil).unsqueeze(0).to(device)
+    with torch.no_grad():
+        deep = reid_model(input_tensor).flatten().cpu().numpy().tolist()
+
+    # 结构特征
+    hu  = extract_hu_feature(crop)
+    lbp = extract_lbp_feature(crop)
+
+    return {
+        "deep": deep,   # 512维
+        "hu":   hu,     # 7维
+        "lbp":  lbp     # 59维
+    }
+
 class DetectionItem(BaseModel):
     class_id: int
     class_name: str
     confidence: float
     bbox: List[float]
-    feature: List[float] = []
+    feature: dict = {}
 
 class PredictResponse(BaseModel):
     filePath: str
@@ -44,26 +112,6 @@ class PredictResponse(BaseModel):
     message: str
     image_width:int
     image_height:int
-
-def extract_feature(cv2_img, bbox):
-    """
-    根据坐标抠图并提取特征向量
-    """
-    x1, y1, x2, y2 = map(int, bbox)
-    # 抠图
-    crop = cv2_img[max(0, y1):y2, max(0, x1):x2]
-    if crop.size == 0:
-        return []
-
-    # 转换格式并进行推理
-    crop_pil = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-    input_tensor = preprocess(crop_pil).unsqueeze(0).to(device)
-
-    with torch.no_grad():
-        feature = reid_model(input_tensor)
-
-    # 压平并转为 Python list
-    return feature.flatten().cpu().numpy().tolist()
 
 @app.post("/predict/")
 async def predict(

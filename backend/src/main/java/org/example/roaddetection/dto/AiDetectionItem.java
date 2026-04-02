@@ -3,6 +3,7 @@ package org.example.roaddetection.dto;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 @Data
 public class AiDetectionItem {
@@ -10,5 +11,5 @@ public class AiDetectionItem {
     private String class_name;
     private Double confidence;
     private List<Float> bbox;
-    private List<Float> feature;
+    private FeatureDTO feature;
 }
