@@ -15,6 +15,7 @@ import org.example.roaddetection.events.RoadInfoUpdateEvent;
 import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.InspectionImageMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
+import org.example.roaddetection.util.DistanceUtil;
 import org.example.roaddetection.util.GpsOffsetUtil;
 import org.example.roaddetection.util.PathUtil;
 import org.springframework.beans.factory.annotation.Value;
@@ -151,22 +152,36 @@ public class DroneService {
         }
 
         // 1. 【粗筛】
-        double range = 0.0001;
+        double radius = 5.0; // 米
+
+        double deltaLat = radius / 111000.0;
+        double deltaLng = radius / (111000.0 * Math.cos(Math.toRadians(event.getLat())));
+
         List<DefectEntity> nearbyEntities = entityMapper.selectList(
                 new LambdaQueryWrapper<DefectEntity>()
-                        .between(DefectEntity::getLng, event.getLng() - range, event.getLng() + range)
-                        .between(DefectEntity::getLat, event.getLat() - range, event.getLat() + range)
+                        .between(DefectEntity::getLng, event.getLng() - deltaLng, event.getLng() + deltaLng)
+                        .between(DefectEntity::getLat, event.getLat() - deltaLat, event.getLat() + deltaLat)
         );
 
+        List<DefectEntity> filteredEntities = nearbyEntities.stream()
+                .filter(e -> DistanceUtil.distance(
+                        event.getLat(), event.getLng(),
+                        e.getLat(), e.getLng()
+                ) <= radius)
+                .toList();
+
         Map<Long, DefectDetail> entityLatestDetailMap = new HashMap<>();
-        if (!nearbyEntities.isEmpty()) {
-            List<Long> entityIds = nearbyEntities.stream().map(DefectEntity::getId).collect(Collectors.toList());
-            // 查询这些 entity 所有的详情并按 ID 和时间倒序，取最新的一条
+        if (!filteredEntities.isEmpty()) {
+            List<Long> entityIds = filteredEntities.stream()
+                    .map(DefectEntity::getId)
+                    .collect(Collectors.toList());
+
             List<DefectDetail> recentDetails = detailMapper.selectList(
                     new LambdaQueryWrapper<DefectDetail>()
                             .in(DefectDetail::getEntityId, entityIds)
                             .orderByDesc(DefectDetail::getId)
             );
+
             for (DefectDetail detail : recentDetails) {
                 entityLatestDetailMap.putIfAbsent(detail.getEntityId(), detail);
             }
