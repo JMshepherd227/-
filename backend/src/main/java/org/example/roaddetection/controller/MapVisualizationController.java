@@ -139,7 +139,8 @@ public class MapVisualizationController {
 
 
     /**
-     * * 获取病害实体的所有历史观测记录（自带图片URL，按时间倒序）
+     * 获取病害实体的所有历史观测记录（自带图片URL，按时间倒序）
+     * 图片url为相对路径，需要项目根路径+图片url进行拼接
      * @param entityId 病害实体id
      * @return 包含病害详情列表的接口响应
      */
