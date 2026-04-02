@@ -7,6 +7,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.roaddetection.common.Result;
 import org.example.roaddetection.common.TileBBox;
+import org.example.roaddetection.entity.DefectEntity;
+import org.example.roaddetection.mapper.DefectEntityMapper;
 import org.example.roaddetection.util.TileUtil;
 import org.example.roaddetection.entity.DefectDetail;
 import org.example.roaddetection.entity.InspectionImage;
@@ -28,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 @RequestMapping("/api/v1/map")
 @RequiredArgsConstructor
 public class MapVisualizationController {
-    private final InspectionImageMapper inspectionImageMapper;
+    private final DefectEntityMapper defectEntityMapper;
     private final DefectDetailMapper defectDetailMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     private final StringRedisTemplate stringRedisTemplate;
@@ -41,7 +43,7 @@ public class MapVisualizationController {
      * @return 包含病害点的接口响应
      */
     @GetMapping("/tile")
-    public Result<List<InspectionImage>> getDefectsInViewport(
+    public Result<List<DefectEntity>> getDefectsInViewport(
             @RequestParam int z,
             @RequestParam int x,
             @RequestParam int y
@@ -71,7 +73,7 @@ public class MapVisualizationController {
                     }
 
                     try {
-                        List<InspectionImage> cachedData = objectMapper.readValue(json, new TypeReference<List<InspectionImage>>() {});
+                        List<DefectEntity> cachedData = objectMapper.readValue(json, new TypeReference<List<DefectEntity>>() {});
                         return Result.success(cachedData);
                     } catch (Exception e) {
                         log.error("反序列化失败，删除缓存: {}", cacheKey, e);
@@ -86,8 +88,8 @@ public class MapVisualizationController {
                     log.warn("获取锁成功，未命中缓存，正在查询数据库...");
                     try {
                         // 查询数据库
-                        List<InspectionImage> dbData =
-                                inspectionImageMapper.selectDefectsInViewport(minLat, maxLat, minLng, maxLng);
+                        List<DefectEntity> dbData =
+                                defectEntityMapper.selectEntitiesInViewport(minLat, maxLat, minLng, maxLng);
                         // 防穿透
                         if (dbData == null || dbData.isEmpty()) {
                             stringRedisTemplate.opsForValue().set(cacheKey, "[]", 120, TimeUnit.SECONDS);
@@ -137,18 +139,15 @@ public class MapVisualizationController {
 
 
     /**
-     * 获取某张照片的病害详情
-     * @param imageId 无人机照片id
-     * @return 包含该照片的病害详情列表的接口响应
+     * * 获取病害实体的所有历史观测记录（自带图片URL，按时间倒序）
+     * @param entityId 病害实体id
+     * @return 包含病害详情列表的接口响应
      */
-    @GetMapping("/{imageId}/details")
-    public Result<List<DefectDetail>> getDetail(@PathVariable("imageId") Long imageId) {
+    @GetMapping("/{entityId}/details")
+    public Result<List<DefectDetail>> getDetail(@PathVariable("entityId") Long entityId) {
         try {
-            QueryWrapper<DefectDetail> wrapper = new QueryWrapper<>();
-            wrapper.eq("image_id", imageId);
-
-            List<DefectDetail> idList = defectDetailMapper.selectList(wrapper);
-            return Result.success(idList);
+            List<DefectDetail> details = defectDetailMapper.selectDetailsWithImageByEntityId(entityId);
+            return Result.success(details);
         } catch (Exception e) {
             return Result.fail("查询失败: " + e.getMessage());
         }
