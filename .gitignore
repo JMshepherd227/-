@@ -44,3 +44,13 @@ build/
 ### dir ###
 result/
 origin/
+
+### Python ###
+__pycache__/
+*.py[cod]
+
+### Node ###
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/node_modules/.vite/
