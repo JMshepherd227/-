@@ -10,14 +10,4 @@ import java.util.List;
 
 @Mapper
 public interface InspectionImageMapper extends BaseMapper<InspectionImage> {
-    @Select("SELECT * FROM inspection_image " +
-            "WHERE is_defect = 1 " +
-            "AND matched_lat BETWEEN #{minLat}*1.5-#{maxLat} AND #{maxLat}*1.5-#{minLat} " +
-            "AND matched_lng BETWEEN #{minLng}*1.5-#{maxLng} AND #{maxLng}*1.5-#{minLng}")
-    List<InspectionImage> selectDefectsInViewport(
-            @Param("minLat") Double minLat,
-            @Param("maxLat") Double maxLat,
-            @Param("minLng") Double minLng,
-            @Param("maxLng") Double maxLng
-    );
 }

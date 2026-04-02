@@ -8,7 +8,7 @@ import java.util.List;
 
 @Mapper
 public interface DefectDetailMapper extends BaseMapper<DefectDetail> {
-    @Select("SELECT d.*, i.result_image_url, i.original_image_url, i.capture_time, i.create_time" +
+    @Select("SELECT d.*, i.result_image_url, i.original_image_url, i.capture_time " +
             "FROM defect_detail d " +
             "JOIN inspection_image i ON d.image_id = i.id " +
             "WHERE d.entity_id = #{entityId} " +
