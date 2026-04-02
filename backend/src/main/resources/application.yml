@@ -5,7 +5,7 @@ spring:
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/drone_inspection?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
-    password: jfkpass050227
+    password: asdf520520.
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   servlet:
@@ -50,9 +50,12 @@ drone:
   # Linux / 生产环境
   # origin-dir: /data/uav/origin
   # Windows 本地开发（取消注释后使用）
-  origin-dir: C:\Users\jfkyx\Desktop\dachuang\UAVRoadDetection/origin
+  origin-dir: D:\work(work only)\python\UAVRoadDetection/origin
 
   # Python AI 推理服务地址
   ai-url: http://localhost:8000/predict/
 
   ai-timeout-ms: 10000
+
+amap:
+  key: ffb3478b5762d310a9ba4baa8dd157e6

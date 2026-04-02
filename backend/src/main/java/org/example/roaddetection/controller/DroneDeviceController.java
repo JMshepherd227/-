@@ -5,7 +5,10 @@ import org.example.roaddetection.common.Result;
 import org.example.roaddetection.dto.DroneUpdateDTO;
 import org.example.roaddetection.entity.DroneDevice;
 import org.example.roaddetection.mapper.DroneDeviceMapper;
+import org.example.roaddetection.mapper.InspectionTaskMapper;
+import org.example.roaddetection.service.DeviceService;
 import org.springframework.beans.BeanUtils;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -15,78 +18,51 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DroneDeviceController {
     private final DroneDeviceMapper droneDeviceMapper;
+    private final DeviceService deviceService;
 
     /**
      * 添加无人机
      */
     @PostMapping("")
+    @Transactional(rollbackFor = Exception.class)
     public Result<DroneDevice> droneUpload(@RequestBody DroneUpdateDTO dto) {
-        try {
-            DroneDevice droneDevice = new DroneDevice();
-            BeanUtils.copyProperties(dto, droneDevice);
-            droneDeviceMapper.insert(droneDevice);
-            return Result.success();
-        } catch (Exception e) {
-            return Result.fail("添加失败" + e.getMessage());
-        }
+        deviceService.createDrone(dto);
+        return Result.success();
     }
     /**
      * 删除无人机
      */
     @DeleteMapping("/{id}")
+    @Transactional(rollbackFor = Exception.class)
     public Result<DroneDevice> droneDelete(@PathVariable Long id) {
-        try {
-            if(droneDeviceMapper.selectById(id)==null)
-                return Result.fail("id不存在");
-            if(droneDeviceMapper.selectById(id).getStatus() == 1)
-                return Result.fail("无人机工作中");
-            droneDeviceMapper.deleteById(id);
-            return Result.success();
-        } catch (Exception e) {
-            return Result.fail("删除失败" + e.getMessage());
-        }
+        deviceService.deleteDrone(id);
+        return Result.success();
     }
     /**
      *修改无人机信息
      */
     @PutMapping("/{id}")
+    @Transactional(rollbackFor = Exception.class)
     public Result<DroneDevice> droneUpdate(@RequestBody DroneUpdateDTO dto, @PathVariable Long id) {
-        try {
-            if(droneDeviceMapper.selectById(id)==null)
-                return Result.fail("id不存在");
-            DroneDevice droneDevice = new DroneDevice();
-            BeanUtils.copyProperties(dto, droneDevice);
-            droneDevice.setId(id);
-            droneDeviceMapper.updateById(droneDevice);
-            return Result.success();
-        } catch (Exception e) {
-            return Result.fail("修改失败" + e.getMessage());
-        }
+        deviceService.updateDrone(dto, id);
+        return Result.success();
     }
     /**
      *获取无人机信息
      */
     @GetMapping("/{id}")
+    @Transactional(rollbackFor = Exception.class)
     public Result<DroneDevice> getDrone(@PathVariable Long id) {
-        try {
-            if(droneDeviceMapper.selectById(id)==null)
-                return Result.fail("id不存在");
-            DroneDevice droneDevice = droneDeviceMapper.selectById(id);
-            return Result.success(droneDevice);
-        } catch (Exception e) {
-            return Result.fail("修改失败" + e.getMessage());
-        }
+        DroneDevice droneDevice = deviceService.getDrone(id);
+        return Result.success(droneDevice);
     }
     /**
      *无人机列表获取
      */
     @GetMapping("")
+    @Transactional(rollbackFor = Exception.class)
     public Result<List<DroneDevice>> getDroneList() {
-        try {
-            List<DroneDevice> droneDevices = droneDeviceMapper.selectList(null);
-            return Result.success(droneDevices);
-        } catch (Exception e) {
-            return Result.fail("获取失败：" + e.getMessage());
-        }
+        List<DroneDevice> droneDevices = deviceService.getDroneList();
+        return Result.success(droneDevices);
     }
 }

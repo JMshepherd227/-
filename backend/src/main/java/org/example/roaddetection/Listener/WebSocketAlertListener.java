@@ -37,10 +37,10 @@ public class WebSocketAlertListener {
 
             webSocketHandler.broadcastMessage(JSONUtil.toJsonStr(wsMessage));
 
-            log.warn("【实时报警已推送】任务:{} 坐标:({},{}) 类型:{}",
-                    event.taskId(), event.lng(), event.lat(), event.aiPredictResponse());
+            log.warn("【实时报警已推送】任务:{} 坐标:({},{})",
+                    event.taskId(), event.lng(), event.lat());
         } catch (Exception e) {
-            log.error("推送病害报警失败", e);
+            log.error("推送病害报警失败:{} 任务:{} 完整响应:{}", e, event.taskId(), event.aiPredictResponse());
         }
     }
 }

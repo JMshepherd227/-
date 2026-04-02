@@ -21,9 +21,9 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         registry.addResourceHandler("/result/**")
-                .addResourceLocations("file:C:/Users/jfkyx/Desktop/dachuang/UAVRoadDetection/result/");
+                .addResourceLocations("file:D:/work(work only)/python/UAVRoadDetection/result/");
 
         registry.addResourceHandler("/origin/**")
-                .addResourceLocations("file:C:/Users/jfkyx/Desktop/dachuang/UAVRoadDetection/origin/");
+                .addResourceLocations("file:D:/work(work only)/python/UAVRoadDetection/origin");
     }
 }

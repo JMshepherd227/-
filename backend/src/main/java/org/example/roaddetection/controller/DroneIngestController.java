@@ -6,6 +6,7 @@ import org.example.roaddetection.events.TelemetryEvent;
 import org.example.roaddetection.service.DroneService;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
@@ -25,13 +26,19 @@ public class DroneIngestController {
     }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Transactional(rollbackFor = Exception.class)
     public Result<String> uploadImage(
             @RequestParam("taskId") Long taskId,
             @RequestParam("droneId") Long droneId,
             @RequestParam("lng") Double lng,
             @RequestParam("lat") Double lat,
+            @RequestParam("altitude") Double altitude,
+            @RequestParam("yaw") Double yaw,
+            @RequestParam("pitch") Double pitch,
+            @RequestParam("roll") Double roll,
+            @RequestParam("fov") Double fov,
             @RequestPart("file") MultipartFile file) throws Exception {
-        droneService.processUploadSync(taskId,droneId,lng,lat,file);
+        droneService.processUploadSync(taskId, droneId, lng, lat, altitude, yaw, pitch, roll, fov, file);
         return Result.success("图片上传成功");
     }
 }
