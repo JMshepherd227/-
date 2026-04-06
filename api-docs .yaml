@@ -1,0 +1,609 @@
+openapi: 3.0.1
+info:
+  title: OpenAPI definition
+  version: v0
+servers:
+- url: http://localhost:8080
+  description: Generated server url
+paths:
+  /api/v1/tasks/{id}:
+    get:
+      tags:
+      - inspection-task-controller
+      operationId: getTask
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+    put:
+      tags:
+      - inspection-task-controller
+      operationId: taskUpdate
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskUpdateDTO'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+    delete:
+      tags:
+      - inspection-task-controller
+      operationId: taskDelete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+  /api/v1/tasks/{id}/start:
+    put:
+      tags:
+      - inspection-task-controller
+      operationId: taskStart
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultString'
+  /api/v1/tasks/{droneId}/finish:
+    put:
+      tags:
+      - inspection-task-controller
+      operationId: taskFinish
+      parameters:
+      - name: droneId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultString'
+  /api/v1/devices/{id}:
+    get:
+      tags:
+      - drone-device-controller
+      operationId: getDrone
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+    put:
+      tags:
+      - drone-device-controller
+      operationId: droneUpdate
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DroneUpdateDTO'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+    delete:
+      tags:
+      - drone-device-controller
+      operationId: droneDelete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+  /api/v1/tasks:
+    get:
+      tags:
+      - inspection-task-controller
+      operationId: getTaskList
+      parameters:
+      - name: query
+        in: query
+        required: true
+        schema:
+          $ref: '#/components/schemas/TaskQueryDTO'
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultListInspectionTask'
+    post:
+      tags:
+      - inspection-task-controller
+      operationId: taskCreate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskUpdateDTO'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultInspectionTask'
+  /api/v1/drones/upload:
+    post:
+      tags:
+      - drone-ingest-controller
+      operationId: uploadImage
+      parameters:
+      - name: taskId
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: droneId
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: lng
+        in: query
+        required: true
+        schema:
+          type: number
+          format: double
+      - name: lat
+        in: query
+        required: true
+        schema:
+          type: number
+          format: double
+      - name: altitude
+        in: query
+        required: true
+        schema:
+          type: number
+          format: double
+      - name: yaw
+        in: query
+        required: true
+        schema:
+          type: number
+          format: double
+      - name: pitch
+        in: query
+        required: true
+        schema:
+          type: number
+          format: double
+      - name: roll
+        in: query
+        required: true
+        schema:
+          type: number
+          format: double
+      - name: fov
+        in: query
+        required: true
+        schema:
+          type: number
+          format: double
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              required:
+              - file
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultString'
+  /api/v1/drones/telemetry:
+    post:
+      tags:
+      - drone-ingest-controller
+      operationId: receiveTelemetry
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: object
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultString'
+  /api/v1/devices:
+    get:
+      tags:
+      - drone-device-controller
+      operationId: getDroneList
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultListDroneDevice'
+    post:
+      tags:
+      - drone-device-controller
+      operationId: droneUpload
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DroneUpdateDTO'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultDroneDevice'
+  /api/v1/map/{entityId}/details:
+    get:
+      tags:
+      - map-visualization-controller
+      operationId: getDetail
+      parameters:
+      - name: entityId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultListDefectDetail'
+  /api/v1/map/tile:
+    get:
+      tags:
+      - map-visualization-controller
+      operationId: getDefectsInViewport
+      parameters:
+      - name: z
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: x
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: "y"
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int32
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ResultListDefectEntity'
+components:
+  schemas:
+    TaskUpdateDTO:
+      type: object
+      properties:
+        taskName:
+          type: string
+        droneId:
+          type: integer
+          format: int64
+        routePoints:
+          type: array
+          items:
+            type: object
+            additionalProperties:
+              type: number
+              format: double
+    InspectionTask:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        taskName:
+          type: string
+        droneId:
+          type: integer
+          format: int64
+        routePoints:
+          type: array
+          items:
+            type: object
+            additionalProperties:
+              type: number
+              format: double
+        status:
+          type: integer
+          format: int32
+        createTime:
+          type: string
+          format: date-time
+        updateTime:
+          type: string
+          format: date-time
+        defectCount:
+          type: integer
+          format: int32
+    ResultInspectionTask:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          $ref: '#/components/schemas/InspectionTask'
+    ResultString:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: string
+    DroneUpdateDTO:
+      type: object
+      properties:
+        droneName:
+          type: string
+    DroneDevice:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        droneName:
+          type: string
+        status:
+          type: integer
+          format: int32
+        lastLng:
+          type: number
+          format: double
+        lastLat:
+          type: number
+          format: double
+        createTime:
+          type: string
+          format: date-time
+        updateTime:
+          type: string
+          format: date-time
+    ResultDroneDevice:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          $ref: '#/components/schemas/DroneDevice'
+    TaskQueryDTO:
+      type: object
+      properties:
+        taskName:
+          type: string
+        droneId:
+          type: integer
+          format: int64
+        status:
+          type: integer
+          format: int32
+        defectCount:
+          type: integer
+          format: int32
+        defectCountMin:
+          type: integer
+          format: int32
+        defectCountMax:
+          type: integer
+          format: int32
+    ResultListInspectionTask:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/InspectionTask'
+    DefectDetail:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        imageId:
+          type: integer
+          format: int64
+        entityId:
+          type: integer
+          format: int64
+        defectType:
+          type: string
+        confidence:
+          type: number
+          format: double
+        bbox:
+          type: string
+        featureVector:
+          type: string
+        createTime:
+          type: string
+          format: date-time
+        roadName:
+          type: string
+        address:
+          type: string
+        addressDetail:
+          type: string
+        resultImageUrl:
+          type: string
+        originalImageUrl:
+          type: string
+        captureTime:
+          type: string
+          format: date-time
+    ResultListDefectDetail:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DefectDetail'
+    DefectEntity:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        defectType:
+          type: string
+        lng:
+          type: number
+          format: double
+        lat:
+          type: number
+          format: double
+        status:
+          type: string
+        createTime:
+          type: string
+          format: date-time
+    ResultListDefectEntity:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DefectEntity'
+    ResultListDroneDevice:
+      type: object
+      properties:
+        code:
+          type: integer
+          format: int32
+        msg:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DroneDevice'
