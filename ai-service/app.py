@@ -1,5 +1,6 @@
 import json
-from typing import List
+import time
+from typing import List, Tuple, Optional
 import torch
 from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
@@ -113,6 +114,89 @@ class PredictResponse(BaseModel):
     image_width:int
     image_height:int
 
+class HomographyResponse(BaseModel):
+    status: str
+    message: str
+    inliers: int
+    processing_time_ms: float
+    # 3x3 的单应性矩阵，如果匹配失败则为 None
+    homography_matrix: Optional[List[List[float]]] = None
+
+@app.post("/get_homography/", response_model=HomographyResponse)
+async def get_homography(
+        file1: UploadFile = File(...),
+        file2: UploadFile = File(...)
+):
+    start_time = time.time()
+
+    try:
+        # 1. 异步读取二进制流
+        contents1 = await file1.read()
+        contents2 = await file2.read()
+
+        # 2. 内存解码为 numpy 数组 (直接解码为灰度图，极致提速)
+        nparr1 = np.frombuffer(contents1, np.uint8)
+        nparr2 = np.frombuffer(contents2, np.uint8)
+
+        img1 = cv2.imdecode(nparr1, cv2.IMREAD_GRAYSCALE)
+        img2 = cv2.imdecode(nparr2, cv2.IMREAD_GRAYSCALE)
+
+        if img1 is None or img2 is None:
+            return HomographyResponse(status="error", message="图像解码失败", inliers=0, processing_time_ms=0)
+
+        # 3. 图像增强 (CLAHE)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        img1 = clahe.apply(img1)
+        img2 = clahe.apply(img2)
+
+        # 4. SIFT 特征提取
+        sift = cv2.SIFT_create(nfeatures=3000, contrastThreshold=0.04, edgeThreshold=10)
+
+        kp1, des1 = sift.detectAndCompute(img1, None)
+        kp2, des2 = sift.detectAndCompute(img2, None)
+
+        if des1 is None or des2 is None or len(des1) < 20 or len(des2) < 20:
+            return HomographyResponse(status="failed", message="纹理过弱", inliers=0, processing_time_ms=0)
+
+        # 5. 暴力匹配 (SIFT 必须使用 NORM_L2)
+        # crossCheck=True 表示双向匹配，能过滤掉很多错误的噪点
+        bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+
+        matches = bf.match(des1, des2)
+        # 按距离排序，距离越小匹配度越高
+        matches = sorted(matches, key=lambda x: x.distance)
+
+        # 取前 100 个最好的匹配点
+        good_matches = matches[:100]
+        if len(good_matches) < 15:
+            return HomographyResponse(status="failed", message="有效匹配点过少", inliers=0, processing_time_ms=0)
+
+        # 6. 计算单应性矩阵 (保持不变)
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+        # 使用 RANSAC 算法计算 H 矩阵
+        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 4.0)
+
+        cost_ms = round((time.time() - start_time) * 1000, 2)
+
+        if H is not None:
+            inlier_count = int(np.sum(mask))
+            # 将 numpy 的 3x3 矩阵转为 Python 标准 List，方便 JSON 序列化传给 Java
+            h_list = H.tolist()
+            return HomographyResponse(
+                status="success",
+                message="匹配成功",
+                inliers=inlier_count,
+                processing_time_ms=cost_ms,
+                homography_matrix=h_list
+            )
+        else:
+            return HomographyResponse(status="failed", message="矩阵计算失败", inliers=0, processing_time_ms=cost_ms)
+
+    except Exception as e:
+        return HomographyResponse(status="error", message=str(e), inliers=0, processing_time_ms=0)
+
 @app.post("/predict/")
 async def predict(
         file: UploadFile = File(...),
@@ -145,12 +229,12 @@ async def predict(
             class_ids = r.boxes.cls.cpu().numpy().astype(int)
             confidences = r.boxes.conf.cpu().numpy()
 
-            raw_img_cv2 = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+            #raw_img_cv2 = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
             for i in range(detections_num):
                 current_bbox = [float(val) for val in boxes_data[i]]
 
-                feature_vec = extract_feature(raw_img_cv2, current_bbox)
+                #feature_vec = extract_feature(raw_img_cv2, current_bbox)
 
                 detections.append(
                     DetectionItem(
@@ -158,7 +242,7 @@ async def predict(
                         class_name=r.names[int(class_ids[i])],
                         confidence=float(confidences[i]),
                         bbox=current_bbox,
-                        feature=feature_vec
+                        #feature=feature_vec
                     )
                 )
         else:
