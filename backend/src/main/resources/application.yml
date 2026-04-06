@@ -51,9 +51,11 @@ drone:
   # origin-dir: /data/uav/origin
   # Windows 本地开发（取消注释后使用）
   origin-dir: D:\work(work only)\python\UAVRoadDetection/origin
+  root-dir: D:\work(work only)\python\UAVRoadDetection
 
   # Python AI 推理服务地址
   ai-url: http://localhost:8000/predict/
+  match-url: http://localhost:8000/get_homography/
 
   ai-timeout-ms: 10000
 
