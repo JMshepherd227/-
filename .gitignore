@@ -48,6 +48,7 @@ origin/
 ### Python ###
 __pycache__/
 *.py[cod]
+ai-service/photo
 
 ### Node ###
 node_modules/
