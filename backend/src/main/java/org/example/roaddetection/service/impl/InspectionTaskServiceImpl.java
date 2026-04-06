@@ -1,5 +1,6 @@
 package org.example.roaddetection.service.impl;
 
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +12,7 @@ import org.example.roaddetection.entity.InspectionTask;
 import org.example.roaddetection.enums.DroneStatus;
 import org.example.roaddetection.enums.TaskStatus;
 import org.example.roaddetection.events.TaskFinishEvent;
+import org.example.roaddetection.handler.DroneWebSocketHandler;
 import org.example.roaddetection.mapper.DroneDeviceMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
 import org.example.roaddetection.service.InspectionTaskService;
@@ -20,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -29,6 +32,7 @@ public class InspectionTaskServiceImpl extends ServiceImpl<InspectionTaskMapper,
     private final DroneDeviceMapper droneDeviceMapper;
     private final ApplicationEventPublisher publisher;
     private final InspectionTaskMapper inspectionTaskMapper;
+    private final DroneWebSocketHandler webSocketHandler;
 
     /*
     结束任务
@@ -95,6 +99,12 @@ public class InspectionTaskServiceImpl extends ServiceImpl<InspectionTaskMapper,
 
         inspectionTaskMapper.updateById(task);
         droneDeviceMapper.updateById(drone);
+
+        Map<String, Object> wsMessage = Map.of(
+                "type", "task_start",
+                "data", task  // 直接把整个 task 对象发过去，里面包含了 routePoints 航线
+        );
+        webSocketHandler.broadcastMessage(JSONUtil.toJsonStr(wsMessage));
     }
 
     /*

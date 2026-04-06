@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.example.roaddetection.dto.FeatureDTO;
+import org.example.roaddetection.dto.AiMatchResponseDTO;
 import org.example.roaddetection.events.AiResultEvent;
 import org.example.roaddetection.events.DefectDetectedEvent;
 import org.example.roaddetection.dto.AiDetectionItem;
@@ -15,9 +15,7 @@ import org.example.roaddetection.events.RoadInfoUpdateEvent;
 import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.InspectionImageMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
-import org.example.roaddetection.util.DistanceUtil;
-import org.example.roaddetection.util.GpsOffsetUtil;
-import org.example.roaddetection.util.PathUtil;
+import org.example.roaddetection.util.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
@@ -28,13 +26,11 @@ import org.springframework.web.multipart.MultipartFile;
 import cn.hutool.json.JSONUtil;
 import org.example.roaddetection.entity.DefectEntity;
 import org.example.roaddetection.mapper.DefectEntityMapper;
-import org.example.roaddetection.util.FeatureUtil;
 
 import java.io.File;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -48,24 +44,22 @@ public class DroneService {
 
     private final DroneAsyncService droneAsyncService;
     private final initImageService initImageService;
+    private final AiService aiService;
 
     private final ApplicationEventPublisher publisher;
 
     @Value("${drone.origin-dir}")
     private String originDir;
 
+    @Value("${drone.root-dir}")
+    private String rootDir;
+
     /**
      * 【主线程同步入口】：处理文件上传、本地保存、数据库初始化占位
      */
-    public void processUploadSync(Long taskId,
-                                  Long droneId,
-                                  Double lng,
-                                  Double lat,
-                                  Double altitude,
-                                  Double yaw,
-                                  Double pitch,
-                                  Double roll,
-                                  Double fov,
+    public void processUploadSync(Long taskId, Long droneId,
+                                  Double lng, Double lat,
+                                  Double altitude, Double yaw, Double pitch, Double roll, Double fov,
                                   MultipartFile file) throws Exception {
         log.info("【图片接收】无人机:{} 坐标:({}, {})", droneId, lng, lat);
         LocalDateTime now = LocalDateTime.now();
@@ -132,7 +126,7 @@ public class DroneService {
         imageMapper.updateById(image);
 
         if (hasDefect) {
-            saveDefectDetails(imageId, event);
+            saveDefectDetails(event);
             inspectionTaskMapper.increaseDefectCount(event.getTaskId(), aiResult.getDetections_num());
             publisher.publishEvent(new DefectDetectedEvent(event.getTaskId(), event.getLng(), event.getLat(), event.getAiResult(), resultUrl));
             log.info("【检测完成】发现病害 {} 处，图片ID: {}", aiResult.getDetections_num(), imageId);
@@ -144,130 +138,133 @@ public class DroneService {
     /**
      * 保存病害详情列表
      */
-    @Transactional(rollbackFor = Exception.class)
-    public void saveDefectDetails(Long imageId, AiResultEvent event) {
+    public void saveDefectDetails(AiResultEvent event) {
         AiPredictResponse aiResult = event.getAiResult();
         if (aiResult.getDetections() == null || aiResult.getDetections().isEmpty()) {
             return;
         }
 
-        // 1. 【粗筛】
-        double radius = 5.0; // 米
-
-        double deltaLat = radius / 111000.0;
-        double deltaLng = radius / (111000.0 * Math.cos(Math.toRadians(event.getLat())));
-
-        List<DefectEntity> nearbyEntities = entityMapper.selectList(
-                new LambdaQueryWrapper<DefectEntity>()
-                        .between(DefectEntity::getLng, event.getLng() - deltaLng, event.getLng() + deltaLng)
-                        .between(DefectEntity::getLat, event.getLat() - deltaLat, event.getLat() + deltaLat)
+        InspectionImage lastImage = imageMapper.selectOne(
+                new LambdaQueryWrapper<InspectionImage>()
+                        .eq(InspectionImage::getTaskId, event.getTaskId())
+                        .lt(InspectionImage::getId, event.getImageId())
+                        .orderByDesc(InspectionImage::getId)
+                        .last("LIMIT 1")
         );
 
-        List<DefectEntity> filteredEntities = nearbyEntities.stream()
-                .filter(e -> DistanceUtil.distance(
-                        event.getLat(), event.getLng(),
-                        e.getLat(), e.getLng()
-                ) <= radius)
-                .toList();
+        double[][] H = null;
+        List<DefectDetail> previousImageDefects = new ArrayList<>();
 
-        Map<Long, DefectDetail> entityLatestDetailMap = new HashMap<>();
-        if (!filteredEntities.isEmpty()) {
-            List<Long> entityIds = filteredEntities.stream()
-                    .map(DefectEntity::getId)
-                    .collect(Collectors.toList());
-
-            List<DefectDetail> recentDetails = detailMapper.selectList(
+        if (lastImage != null) {
+            previousImageDefects = detailMapper.selectList(
                     new LambdaQueryWrapper<DefectDetail>()
-                            .in(DefectDetail::getEntityId, entityIds)
-                            .orderByDesc(DefectDetail::getId)
+                            .eq(DefectDetail::getImageId, lastImage.getId())
             );
 
-            for (DefectDetail detail : recentDetails) {
-                entityLatestDetailMap.putIfAbsent(detail.getEntityId(), detail);
+            File newFile = new File(rootDir + "/" + imageMapper.selectById(event.getImageId()).getOriginalImageUrl());
+            File oldFile = new File(rootDir + "/" + lastImage.getOriginalImageUrl());
+
+            if (newFile.exists() && oldFile.exists() && !previousImageDefects.isEmpty()) {
+                try {
+                    AiMatchResponseDTO matchResult = aiService.match(newFile, oldFile);
+                    if (matchResult != null && matchResult.getHomographyMatrix() != null) {
+                        H = matchResult.getHomographyMatrix();
+                        log.info("成功获取H矩阵");
+                    } else {
+                        log.warn("【跨帧匹配未命中】可能无重叠，将作新病害处理。图片ID: {}", event.getImageId());
+                    }
+                } catch (Exception e) {
+                    log.error("【跨帧匹配服务异常】图片ID: {}, 原因: {}", event.getImageId(), e.getMessage());
+                }
+            } else {
+                log.warn("文件不存在或上张图片无病害");
             }
         }
-
-        // 2. 预处理：计算所有新检测到病害的真实 GPS，封装为上下文对象
-        List<NewDefectContext> newDefects = new ArrayList<>();
-        for (AiDetectionItem item : aiResult.getDetections()) {
-            double[] realGps = GpsOffsetUtil.calculateRealGps(
-                    event.getLng(), event.getLat(), event.getYaw(), event.getPitch(), event.getRoll(),
-                    event.getAltitude(), event.getFov(), aiResult.getImageWidth(), aiResult.getImageHeight(), item.getBbox()
-            );
-            newDefects.add(new NewDefectContext(item, realGps[0], realGps[1]));
-        }
-
-        // 3. 【核心逻辑：构建得分矩阵字典】计算所有可能的配对得分
-        List<MatchPair> matchPool = new ArrayList<>();
-
-        for (NewDefectContext newCtx : newDefects) {
-            for (DefectEntity entity : nearbyEntities) {
-                // 类别必须一致
-                if (!entity.getDefectType().equals(newCtx.item.getClass_name())) continue;
-
-                DefectDetail lastDetail = entityLatestDetailMap.get(entity.getId());
-                if (lastDetail == null || lastDetail.getFeatureVector() == null) continue;
-
-                double score = computeMatchScore(newCtx.item, lastDetail);
-
-                // 活跃状态提权：对一直处于监控期的病害放宽匹配容忍度
-                if ("ACTIVE".equals(entity.getStatus())) {
-                    score = Math.min(score * 1.15, 1.0);
-                }
-
-                // 只有基础得分超过 0.5 的才有资格进入候选池，减少排序压力
-                if (score > 0.5) {
-                    matchPool.add(new MatchPair(newCtx, entity, score));
-                }
-            }
-        }
-
-        // 4. 【贪心匹配】：按得分从高到低排序，确保最高置信度优先绑定，且 1对1 排他
-        matchPool.sort((p1, p2) -> Double.compare(p2.score, p1.score));
 
         Set<Long> assignedEntityIds = new HashSet<>();
-        Set<NewDefectContext> assignedNewDefects = new HashSet<>();
+        Set<AiDetectionItem> assignedNewDefects = new HashSet<>();
+        List<MatchPair> matchPool = new ArrayList<>();
+        if (H != null) {
+            for (DefectDetail oldDefect : previousImageDefects) {
+                List<Double> oldBbox = BboxUtil.parseBbox(oldDefect.getBbox());
+                List<Double> projectedOldBbox = HomographyUtil.projectBbox(oldBbox, H);
 
-        for (MatchPair pair : matchPool) {
-            // 如果新病害没被认领，且老病害也没被认领，且得分达标(>= 0.75)
-            if (!assignedNewDefects.contains(pair.newCtx)
-                && !assignedEntityIds.contains(pair.entity.getId())
-                && pair.score >= 0.75) {
+                for (AiDetectionItem newDefect : aiResult.getDetections()) {
+                    if (!oldDefect.getDefectType().equals(newDefect.getClass_name())) continue;
 
-                log.info("【高置信匹配】实体ID: {}, 类型: {}, 得分: {}", pair.entity.getId(), pair.entity.getDefectType(), pair.score);
+                    double iou = HomographyUtil.calculateIou(projectedOldBbox, newDefect.getBbox());
+                    log.info("交并比：{}",iou);
+                    if (iou > 0.3) {
+                        matchPool.add(new MatchPair(newDefect, oldDefect, iou));
+                    }
+                }
+            }
 
-                // 绑定老实体，保存详情记录
-                saveSingleDefectDetail(imageId, pair.newCtx.item, pair.entity.getId(), event);
+            matchPool.sort((p1, p2) -> Double.compare(p2.score, p1.score));
 
-                // 标记为已使用
-                assignedNewDefects.add(pair.newCtx);
-                assignedEntityIds.add(pair.entity.getId());
+            for (MatchPair pair : matchPool) {
+                if (!assignedNewDefects.contains(pair.getNewDefect())
+                    && !assignedEntityIds.contains(pair.oldDefect.getEntityId())
+                    && pair.score >= 0.4) {
+
+                    log.info("【IoU精准合并】实体ID: {}, IoU得分: {}", pair.getOldDefect().getEntityId(), pair.score);
+                    saveSingleDefectDetail(event.getImageId(), pair.getNewDefect(), pair.getOldDefect().getEntityId());
+
+                    assignedNewDefects.add(pair.getNewDefect());
+                    assignedEntityIds.add(pair.oldDefect.getEntityId());
+                }
             }
         }
 
-        // 5. 处理剩下所有未匹配上的新病害（创建全新的 Entity）
-        for (NewDefectContext newCtx : newDefects) {
-            if (!assignedNewDefects.contains(newCtx)) {
-                log.info("【创建新实体】类型: {}, GPS: ({}, {})", newCtx.item.getClass_name(), newCtx.realLng, newCtx.realLat);
-
-                DefectEntity newEntity = new DefectEntity();
-                newEntity.setDefectType(newCtx.item.getClass_name());
-                newEntity.setLng(newCtx.realLng);
-                newEntity.setLat(newCtx.realLat);
-                newEntity.setStatus("ACTIVE");
-                newEntity.setCreateTime(LocalDateTime.now());
-                entityMapper.insert(newEntity);
-
-                saveSingleDefectDetail(imageId, newCtx.item, newEntity.getId(), event);
+        for (AiDetectionItem newDefect : aiResult.getDetections()) {
+            if (!assignedNewDefects.contains(newDefect)) {
+                createNewEntity(newDefect, event);
             }
         }
+
+        publisher.publishEvent(new RoadInfoUpdateEvent(event.getImageId(), event.getLng(), event.getLat()));
     }
 
+
+    private void createNewEntity(AiDetectionItem newDefect, AiResultEvent event) {
+        double[] gps = GpsOffsetUtil.calculateRealGps(
+                event.getLng(), event.getLat(), event.getYaw(), event.getPitch(), event.getRoll(), event.getAltitude(), event.getFov(),
+                event.getAiResult().getImageWidth(), event.getAiResult().getImageHeight(), newDefect.getBbox());
+
+        log.info("【发现新病害实体】类型: {}, GPS: ({}, {})", newDefect.getClass_name(), gps[0], gps[1]);
+
+        DefectEntity newEntity = new DefectEntity();
+        newEntity.setDefectType(newDefect.getClass_name());
+        newEntity.setLng(gps[0]);
+        newEntity.setLat(gps[1]);
+        newEntity.setStatus("ACTIVE");
+        newEntity.setCreateTime(LocalDateTime.now());
+        entityMapper.insert(newEntity);
+
+        saveSingleDefectDetail(event.getImageId(), newDefect, newEntity.getId());
+    }
+
+    private void saveSingleDefectDetail(Long imageId, AiDetectionItem item, Long entityId) {
+        DefectDetail detail = new DefectDetail();
+        detail.setImageId(imageId);
+        detail.setEntityId(entityId);
+        detail.setDefectType(item.getClass_name());
+        detail.setConfidence(item.getConfidence());
+
+        detail.setBbox(JSONUtil.toJsonStr(item.getBbox()));
+        detail.setFeatureVector(item.getFeature() != null ? JSONUtil.toJsonStr(item.getFeature()) : "{}");
+
+        detail.setCreateTime(LocalDateTime.now());
+        detail.setRoadName("解析中");
+        detail.setAddress("解析中");
+        detail.setAddressDetail("解析中");
+
+        detailMapper.insert(detail);
+    }
 
     /**
      * AI 处理失败时，将图片记录标记为失败状态并记录错误原因
      */
-    @Transactional(rollbackFor = Exception.class)
     public void markAsFailed(Long imageId, String errorMsg) {
         InspectionImage image = imageMapper.selectById(imageId);
         if (image == null) {
@@ -280,99 +277,15 @@ public class DroneService {
         log.warn("【处理失败】图片ID: {} 已标记为失败，原因: {}", imageId, errorMsg);
     }
 
-    /**
-     * 提取出的公共保存详情方法
-     */
-    private void saveSingleDefectDetail(Long imageId, AiDetectionItem item, Long entityId, AiResultEvent event) {
-        DefectDetail detail = new DefectDetail();
-        detail.setImageId(imageId);
-        detail.setEntityId(entityId);
-        detail.setDefectType(item.getClass_name());
-        detail.setConfidence(item.getConfidence());
-
-        // 序列化坐标和特征
-        detail.setBbox(JSONUtil.toJsonStr(item.getBbox()));
-        detail.setFeatureVector(JSONUtil.toJsonStr(item.getFeature()));
-
-        detail.setCreateTime(LocalDateTime.now());
-        detail.setRoadName("解析中");
-        detail.setAddress("解析中");
-        detail.setAddressDetail("解析中");
-
-        publisher.publishEvent(new RoadInfoUpdateEvent(imageId, event.getLng(), event.getLat()));
-        detailMapper.insert(detail);
-    }
-
-    private double computeMatchScore(AiDetectionItem newItem,
-                                     DefectDetail lastDetail) {
-
-        String newJson = JSONUtil.toJsonStr(newItem.getFeature());
-        String oldJson = lastDetail.getFeatureVector();
-
-        FeatureDTO newBundle = JSONUtil.toBean(newJson, FeatureDTO.class);
-        FeatureDTO oldBundle = JSONUtil.toBean(oldJson, FeatureDTO.class);
-
-        // 各维度独立计算相似度
-        double simDeep = FeatureUtil.cosineSimilarity(newBundle.getDeep(), oldBundle.getDeep());
-        double simLbp  = FeatureUtil.cosineSimilarity(newBundle.getLbp(),  oldBundle.getLbp());
-        double rawSimHu   = FeatureUtil.cosineSimilarity(newBundle.getHu(),   oldBundle.getHu());
-        double simHu = (rawSimHu + 1.0) / 2.0;
-        double areaScore = computeAreaScore(newItem.getBbox(), lastDetail.getBbox());
-
-        return simDeep  * 0.50
-               + simLbp   * 0.30
-               + areaScore * 0.15
-               + simHu    * 0.05;
-    }
-
-    private double computeAreaScore(List<Float> newBbox, String oldBboxJson) {
-        if (oldBboxJson == null || oldBboxJson.isBlank()) return 0.5;
-
-        List<Float> oldBbox = JSONUtil.toList(oldBboxJson, Float.class);
-        if (oldBbox.size() < 4 || newBbox.size() < 4) return 0.5;
-
-        double newArea = (newBbox.get(2) - newBbox.get(0)) * (newBbox.get(3) - newBbox.get(1));
-        double oldArea = (oldBbox.get(2) - oldBbox.get(0)) * (oldBbox.get(3) - oldBbox.get(1));
-
-        if (oldArea <= 0 || newArea <= 0) return 0.5;
-
-        double ratio = newArea / oldArea;
-
-        if (ratio >= 0.8 && ratio <= 2.5) {
-            return 1.0;
-        } else if (ratio > 2.5 && ratio < 5.0) {
-            return 1.0 - ((ratio - 2.5) / 2.5) * 0.5;
-        } else if (ratio >= 5.0) {
-            return 0.0;
-        } else if (ratio >= 0.5) {
-            return (ratio - 0.5) / 0.3;
-        } else {
-            return 0.0;
-        }
-    }
-
-    @Data
-    private static class NewDefectContext {
-        AiDetectionItem item;
-        double realLng;
-        double realLat;
-
-        public NewDefectContext(AiDetectionItem item, double realLng, double realLat) {
-            this.item = item;
-            this.realLng = realLng;
-            this.realLat = realLat;
-        }
-    }
-
     @Data
     private static class MatchPair {
-        NewDefectContext newCtx;
-        DefectEntity entity;
+        AiDetectionItem newDefect;
+        DefectDetail oldDefect;
         double score;
 
-        public MatchPair(NewDefectContext newCtx, DefectEntity entity, double score) {
-            this.newCtx = newCtx;
-            this.entity = entity;
+        public MatchPair(AiDetectionItem item, DefectDetail defectDetail, double score) {
+            this.newDefect = item;
+            this.oldDefect = defectDetail;
             this.score = score;
         }
     }

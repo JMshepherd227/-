@@ -20,12 +20,7 @@ import java.io.File;
 public class DroneAsyncService {
 
     private final ApplicationEventPublisher publisher;
-
-    @Value("${drone.ai-url:http://localhost:8000/predict/}")
-    private String aiUrl;
-
-    @Value("${drone.ai-timeout-ms:10000}")
-    private int aiTimeoutMs;
+    private final AiService aiService;
 
     /**
      * 调用 AI 服务，完成后发布事件，由 DroneService 的监听器处理结果写库。
@@ -41,7 +36,7 @@ public class DroneAsyncService {
                 throw new RuntimeException("找不到已保存的原图文件: " + absolutePath);
             }
 
-            AiPredictResponse aiResult = callAiService(file);
+            AiPredictResponse aiResult = aiService.predict(file);
 
             publisher.publishEvent(new AiResultEvent(this, imageId, taskId, lng, lat, altitude, yaw, pitch, roll, fov, aiResult));
             log.info("【AI处理完成】图片ID: {}, 检测数量: {}", imageId, aiResult.getDetections_num());
@@ -50,22 +45,5 @@ public class DroneAsyncService {
             log.error("【AI处理失败】图片ID: {}, 原因: {}", imageId, e.getMessage(), e);
             publisher.publishEvent(new AiResultEvent(this, imageId, e.getMessage()));
         }
-    }
-
-    /**
-     * 调用 Python AI 服务
-     */
-    private AiPredictResponse callAiService(File file) {
-        HttpResponse response = HttpRequest.post(aiUrl)
-                .form("file", file)
-                .timeout(aiTimeoutMs)
-                .execute();
-
-        if (!response.isOk()) {
-            throw new RuntimeException("调用 AI 接口失败, 状态码: " + response.getStatus()
-                                       + ", 响应体: " + response.body());
-        }
-
-        return JSONUtil.toBean(response.body(), AiPredictResponse.class);
     }
 }

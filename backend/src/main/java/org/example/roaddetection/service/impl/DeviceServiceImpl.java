@@ -18,7 +18,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DeviceServiceImpl extends ServiceImpl<DroneDeviceMapper, DroneDevice> implements DeviceService {
 
-    private DroneDeviceMapper droneDeviceMapper;
+    private final DroneDeviceMapper droneDeviceMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)

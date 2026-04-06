@@ -31,7 +31,7 @@ public class GpsOffsetUtil {
             double droneYaw, double pitch, double roll,
             double altitude, double fov,
             int imgWidth, int imgHeight,
-            List<Float> bbox) {
+            List<Double> bbox) {
 
         // Step 1. 计算焦距（像素单位）
         double focalLength = (imgWidth / 2.0) / Math.tan(Math.toRadians(fov / 2.0));

@@ -17,6 +17,7 @@ import org.example.roaddetection.mapper.InspectionImageMapper;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Collections;
@@ -144,13 +145,10 @@ public class MapVisualizationController {
      * @param entityId 病害实体id
      * @return 包含病害详情列表的接口响应
      */
+    @Transactional(rollbackFor = Exception.class)
     @GetMapping("/{entityId}/details")
     public Result<List<DefectDetail>> getDetail(@PathVariable("entityId") Long entityId) {
-        try {
-            List<DefectDetail> details = defectDetailMapper.selectDetailsWithImageByEntityId(entityId);
-            return Result.success(details);
-        } catch (Exception e) {
-            return Result.fail("查询失败: " + e.getMessage());
-        }
+        List<DefectDetail> details = defectDetailMapper.selectDetailsWithImageByEntityId(entityId);
+        return Result.success(details);
     }
 }
