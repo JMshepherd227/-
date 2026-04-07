@@ -1,3 +1,4 @@
+#infer.py
 import torch
 import numpy as np
 
@@ -16,7 +17,7 @@ def load_model(pt_path):
 def match(model, P_raw, Q_raw, prob_threshold=0.5, raw_score_threshold=1.0):
     """
     prob_threshold: Softmax 相对概率的底线
-    raw_score_threshold: 特征绝对相似度的底线（你的独立阈值！）
+    raw_score_threshold: 特征绝对相似度的底线
     """
     if len(Q_raw) == 0: return [], []
     if len(P_raw) == 0: return [], list(range(len(Q_raw)))
