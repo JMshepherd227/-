@@ -31,6 +31,7 @@ import java.io.File;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -164,23 +165,20 @@ public class DroneService {
             File newFile = new File(rootDir + "/" + imageMapper.selectById(event.getImageId()).getOriginalImageUrl());
             File oldFile = new File(rootDir + "/" + lastImage.getOriginalImageUrl());
 
-            double distance = 2 * event.getAltitude() * Math.tan(event.getFov() / 2);
-            if(DistanceUtil.distance(lastImage.getRawLat(),lastImage.getRawLng(),event.getLat(),event.getLng()) > distance){
-                if (newFile.exists() && oldFile.exists() && !previousImageDefects.isEmpty()) {
-                    try {
-                        AiMatchResponseDTO matchResult = aiService.match(newFile, oldFile);
-                        if (matchResult != null && matchResult.getHomographyMatrix() != null) {
-                            H = matchResult.getHomographyMatrix();
-                            log.info("成功获取H矩阵");
-                        } else {
-                            log.warn("【跨帧匹配未命中】可能无重叠，将作新病害处理。图片ID: {}", event.getImageId());
-                        }
-                    } catch (Exception e) {
-                        log.error("【跨帧匹配服务异常】图片ID: {}, 原因: {}", event.getImageId(), e.getMessage());
+            if (newFile.exists() && oldFile.exists() && !previousImageDefects.isEmpty()) {
+                try {
+                    AiMatchResponseDTO matchResult = aiService.match(newFile, oldFile);
+                    if (matchResult != null && matchResult.getHomographyMatrix() != null) {
+                        H = matchResult.getHomographyMatrix();
+                        log.info("成功获取H矩阵");
+                    } else {
+                        log.warn("【跨帧匹配未命中】可能无重叠，将作新病害处理。图片ID: {}", event.getImageId());
                     }
-                } else {
-                    log.warn("文件不存在或上张图片无病害");
+                } catch (Exception e) {
+                    log.error("【跨帧匹配服务异常】图片ID: {}, 原因: {}", event.getImageId(), e.getMessage());
                 }
+            } else {
+                log.warn("文件不存在或上张图片无病害");
             }
         }
 
@@ -205,16 +203,50 @@ public class DroneService {
 
             matchPool.sort((p1, p2) -> Double.compare(p2.score, p1.score));
 
-            for (MatchPair pair : matchPool) {
-                if (!assignedNewDefects.contains(pair.getNewDefect())
-                    && !assignedEntityIds.contains(pair.oldDefect.getEntityId())
-                    && pair.score >= 0.4) {
+            Map<AiDetectionItem, double[]> newGpsMap = new HashMap<>();
+            for (AiDetectionItem item : aiResult.getDetections()) {
+                double[] gps = GpsOffsetUtil.calculateRealGps(
+                        event.getLng(), event.getLat(), event.getYaw(), event.getPitch(), event.getRoll(),
+                        event.getAltitude(), event.getFov(), event.getAiResult().getImageWidth(),
+                        event.getAiResult().getImageHeight(), item.getBbox()
+                );
+                newGpsMap.put(item, gps);
+            }
 
-                    log.info("【IoU精准合并】实体ID: {}, IoU得分: {}", pair.getOldDefect().getEntityId(), pair.score);
-                    saveSingleDefectDetail(event.getImageId(), pair.getNewDefect(), pair.getOldDefect().getEntityId());
+            List<Long> entityIds = previousImageDefects.stream()
+                    .map(DefectDetail::getEntityId)
+                    .distinct()
+                    .collect(Collectors.toList());
+
+            Map<Long, DefectEntity> entityCache = entityMapper.selectBatchIds(entityIds)
+                    .stream()
+                    .collect(Collectors.toMap(DefectEntity::getId, e -> e));
+
+            double maxSanityDistance = 8.0;
+
+            for (MatchPair pair : matchPool) {
+                if (assignedNewDefects.contains(pair.getNewDefect()) || assignedEntityIds.contains(pair.getOldDefect().getEntityId())) {
+                    continue;
+                }
+
+                double[] newGps = newGpsMap.get(pair.getNewDefect());
+                DefectEntity oldEntity = entityCache.get(pair.getOldDefect().getEntityId());
+
+                if (oldEntity == null) continue;
+
+                // C. 计算两者的物理距离
+                double physicalDistance = DistanceUtil.distance(oldEntity.getLat(), oldEntity.getLng(), newGps[1], newGps[0]);
+
+                // D. 综合判定：IoU 达标 且 物理距离在合理范围内
+                if (pair.score >= 0.4 && physicalDistance <= maxSanityDistance) {
+                    log.info("【合并成功】实体ID: {}, 距离: {}m, IoU: {}", oldEntity.getId(), physicalDistance, pair.score);
+
+                    saveSingleDefectDetail(event.getImageId(), pair.getNewDefect(), oldEntity.getId());
 
                     assignedNewDefects.add(pair.getNewDefect());
-                    assignedEntityIds.add(pair.oldDefect.getEntityId());
+                    assignedEntityIds.add(oldEntity.getId());
+                } else if (pair.score >= 0.4) {
+                    log.warn("【阻断合并】视觉对齐 IoU={}, 但物理距离 {}m 超过限制，判定为误匹配", pair.score, physicalDistance);
                 }
             }
         }
