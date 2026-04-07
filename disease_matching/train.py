@@ -65,8 +65,8 @@ def train():
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'config': config,
-            }, f'checkpoints/matcher_epoch{epoch+1}.pt')
-            print(f"  → 已保存 checkpoints/matcher_epoch{epoch+1}.pt")
+            }, f'newCheckpoints/matcher_epoch{epoch+1}.pt')
+            print(f"  → 已保存 newCheckpoints/matcher_epoch{epoch+1}.pt")
 
 if __name__ == "__main__":
     train()

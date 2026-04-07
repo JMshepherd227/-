@@ -3,17 +3,29 @@ import torch.nn as nn
 
 class PointEncoder(nn.Module):
     """把每个点的坐标+局部特征编码成向量"""
-    def __init__(self, in_dim, out_dim):
+    def __init__(self, config):
         super().__init__()
+        dim = config.FEATURE_DIM
+        # 坐标投影
+        self.coord_proj = nn.Linear(2, dim)
+        # 类型嵌入：把类型索引转成向量
+        self.type_embedding = nn.Embedding(config.N_CLASSES, dim)
+
         self.mlp = nn.Sequential(
-            nn.Linear(in_dim, out_dim),
-            nn.LayerNorm(out_dim),
+            nn.Linear(dim, dim),
+            nn.LayerNorm(dim),
             nn.ReLU(),
-            nn.Linear(out_dim, out_dim),
+            nn.Linear(dim, dim),
         )
 
-    def forward(self, x):
-        return self.mlp(x)
+    def forward(self, x_with_type):
+        # x_with_type: (B, N, 3) -> [x, y, type_idx]
+        coords = x_with_type[:, :, :2]
+        types = x_with_type[:, :, 2].long()
+
+        # 特征融合：坐标特征 + 类型特征
+        feat = self.coord_proj(coords) + self.type_embedding(types)
+        return self.mlp(feat)
 
 
 class AttentionalGNN(nn.Module):
@@ -59,7 +71,7 @@ class DiseasePointMatcher(nn.Module):
         #in_dim = 2 + config.K_NEIGHBORS  # 坐标 + 局部距离特征
         in_dim = 2
 
-        self.encoder = PointEncoder(in_dim, dim)
+        self.encoder = PointEncoder(config)
         self.gnn = AttentionalGNN(dim, config.N_HEADS, config.N_LAYERS)
 
         #self.dustbin = nn.Parameter(torch.randn(dim))

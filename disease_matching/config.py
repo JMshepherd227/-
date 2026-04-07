@@ -1,4 +1,5 @@
 class Config:
+    N_CLASSES = 4
     # 区域与误差参数（根据你的设备标定）
     MAP_SIZE = 1000.0          # 模拟区域大小（归一化前，米）
     GLOBAL_OFFSET_MAX = 10.0   # 全局偏移最大值（米）
