@@ -164,20 +164,23 @@ public class DroneService {
             File newFile = new File(rootDir + "/" + imageMapper.selectById(event.getImageId()).getOriginalImageUrl());
             File oldFile = new File(rootDir + "/" + lastImage.getOriginalImageUrl());
 
-            if (newFile.exists() && oldFile.exists() && !previousImageDefects.isEmpty()) {
-                try {
-                    AiMatchResponseDTO matchResult = aiService.match(newFile, oldFile);
-                    if (matchResult != null && matchResult.getHomographyMatrix() != null) {
-                        H = matchResult.getHomographyMatrix();
-                        log.info("成功获取H矩阵");
-                    } else {
-                        log.warn("【跨帧匹配未命中】可能无重叠，将作新病害处理。图片ID: {}", event.getImageId());
+            double distance = 2 * event.getAltitude() * Math.tan(event.getFov() / 2);
+            if(DistanceUtil.distance(lastImage.getRawLat(),lastImage.getRawLng(),event.getLat(),event.getLng()) > distance){
+                if (newFile.exists() && oldFile.exists() && !previousImageDefects.isEmpty()) {
+                    try {
+                        AiMatchResponseDTO matchResult = aiService.match(newFile, oldFile);
+                        if (matchResult != null && matchResult.getHomographyMatrix() != null) {
+                            H = matchResult.getHomographyMatrix();
+                            log.info("成功获取H矩阵");
+                        } else {
+                            log.warn("【跨帧匹配未命中】可能无重叠，将作新病害处理。图片ID: {}", event.getImageId());
+                        }
+                    } catch (Exception e) {
+                        log.error("【跨帧匹配服务异常】图片ID: {}, 原因: {}", event.getImageId(), e.getMessage());
                     }
-                } catch (Exception e) {
-                    log.error("【跨帧匹配服务异常】图片ID: {}, 原因: {}", event.getImageId(), e.getMessage());
+                } else {
+                    log.warn("文件不存在或上张图片无病害");
                 }
-            } else {
-                log.warn("文件不存在或上张图片无病害");
             }
         }
 
