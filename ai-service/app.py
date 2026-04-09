@@ -34,7 +34,7 @@ reid_model = torch.nn.Sequential(*(list(reid_model.children())[:-1]))
 reid_model.to(device)
 reid_model.eval()
 
-# 加载 GNN 拓扑匹配模型 (best_matcher.pt)
+# 加载 GNN 拓扑匹配模型
 MATCHER_PATH = "D:/work(work only)/python/UAVRoadDetection/ai-service/model/best_matcher.pt"
 try:
     matcher_checkpoint = torch.load(MATCHER_PATH, map_location=device, weights_only=False)
