@@ -1,7 +1,6 @@
 package org.example.roaddetection.dto;
 
 import lombok.Data;
-import org.example.roaddetection.entity.DefectDetail;
 
 @Data
 public class AiMatchResponseDTO {

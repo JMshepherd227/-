@@ -1,10 +1,13 @@
 package org.example.roaddetection.service;
 
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.roaddetection.dto.AiMatchResponseDTO;
+import org.example.roaddetection.dto.TempEntityDTO;
 import org.example.roaddetection.events.AiResultEvent;
 import org.example.roaddetection.events.DefectDetectedEvent;
 import org.example.roaddetection.dto.AiDetectionItem;
@@ -19,19 +22,16 @@ import org.example.roaddetection.util.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-import cn.hutool.json.JSONUtil;
-import org.example.roaddetection.entity.DefectEntity;
-import org.example.roaddetection.mapper.DefectEntityMapper;
 
 import java.io.File;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -41,13 +41,14 @@ public class DroneService {
     private final InspectionImageMapper imageMapper;
     private final DefectDetailMapper detailMapper;
     private final InspectionTaskMapper inspectionTaskMapper;
-    private final DefectEntityMapper entityMapper;
 
     private final DroneAsyncService droneAsyncService;
     private final initImageService initImageService;
     private final AiService aiService;
 
     private final ApplicationEventPublisher publisher;
+
+    private final StringRedisTemplate stringRedisTemplate;
 
     @Value("${drone.origin-dir}")
     private String originDir;
@@ -166,23 +167,31 @@ public class DroneService {
             File oldFile = new File(rootDir + "/" + lastImage.getOriginalImageUrl());
 
             if (newFile.exists() && oldFile.exists() && !previousImageDefects.isEmpty()) {
-                try {
-                    AiMatchResponseDTO matchResult = aiService.match(newFile, oldFile);
-                    if (matchResult != null && matchResult.getHomographyMatrix() != null) {
-                        H = matchResult.getHomographyMatrix();
-                        log.info("成功获取H矩阵");
-                    } else {
-                        log.warn("【跨帧匹配未命中】可能无重叠，将作新病害处理。图片ID: {}", event.getImageId());
+                double imageGap = DistanceUtil.distance(
+                        lastImage.getRawLat(), lastImage.getRawLng(),
+                        event.getLat(), event.getLng()
+                );
+                double groundCoverage = 2 * event.getAltitude() * Math.tan(Math.toRadians(event.getFov() / 2));
+
+                if (imageGap < groundCoverage * 0.8) {
+                    try {
+                        AiMatchResponseDTO matchResult = aiService.match(newFile, oldFile);
+                        if (matchResult != null && matchResult.getHomographyMatrix() != null) {
+                            H = matchResult.getHomographyMatrix();
+                            log.info("成功获取H矩阵");
+                        } else {
+                            log.warn("【跨帧匹配未命中】...");
+                        }
+                    } catch (Exception e) {
+                        log.error("【跨帧匹配服务异常】: {}", e.getMessage());
                     }
-                } catch (Exception e) {
-                    log.error("【跨帧匹配服务异常】图片ID: {}, 原因: {}", event.getImageId(), e.getMessage());
+                } else {
+                    log.warn("【物理拦截】图片间距 {}m 过大，跳过 ORB 匹配", imageGap);
                 }
-            } else {
-                log.warn("文件不存在或上张图片无病害");
             }
         }
 
-        Set<Long> assignedEntityIds = new HashSet<>();
+        Set<String> assignedTempEntityIds = new HashSet<>();
         Set<AiDetectionItem> assignedNewDefects = new HashSet<>();
         List<MatchPair> matchPool = new ArrayList<>();
         if (H != null) {
@@ -213,38 +222,64 @@ public class DroneService {
                 newGpsMap.put(item, gps);
             }
 
-            List<Long> entityIds = previousImageDefects.stream()
-                    .map(DefectDetail::getEntityId)
+            List<String> tempEntityIds = previousImageDefects.stream()
+                    .map(DefectDetail::getTempEntityId)
+                    .filter(Objects::nonNull)
                     .distinct()
-                    .collect(Collectors.toList());
+                    .toList();
 
-            Map<Long, DefectEntity> entityCache = entityMapper.selectBatchIds(entityIds)
-                    .stream()
-                    .collect(Collectors.toMap(DefectEntity::getId, e -> e));
+            Map<String, TempEntityDTO> tempEntityCache = new HashMap<>();
+
+            if (!tempEntityIds.isEmpty()) {
+                // 2. 构造本次任务的 Redis Hash Key
+                String redisKey = "TaskTempEntities:" + event.getTaskId();
+
+                // 3. 拉取redis
+                List<Object> redisValues =
+                        stringRedisTemplate.opsForHash()
+                                .multiGet(redisKey, new ArrayList<>(tempEntityIds));
+
+                // 4. 解析 JSON 并放入缓存 Map 中
+                for (int i = 0; i < tempEntityIds.size(); i++) {
+                    Object jsonStr = redisValues.get(i);
+                    if (jsonStr != null) {
+                        TempEntityDTO dto = JSONUtil.toBean(jsonStr.toString(), TempEntityDTO.class);
+                        tempEntityCache.put(tempEntityIds.get(i), dto);
+                    }
+                }
+            }
 
             double maxSanityDistance = 8.0;
 
             for (MatchPair pair : matchPool) {
-                if (assignedNewDefects.contains(pair.getNewDefect()) || assignedEntityIds.contains(pair.getOldDefect().getEntityId())) {
+                if (assignedNewDefects.contains(pair.getNewDefect()) || assignedTempEntityIds.contains(pair.getOldDefect().getTempEntityId())) {
                     continue;
                 }
 
                 double[] newGps = newGpsMap.get(pair.getNewDefect());
-                DefectEntity oldEntity = entityCache.get(pair.getOldDefect().getEntityId());
+                TempEntityDTO oldTempEntity = tempEntityCache.get(pair.getOldDefect().getTempEntityId());
 
-                if (oldEntity == null) continue;
+                if (oldTempEntity == null) continue;
 
                 // C. 计算两者的物理距离
-                double physicalDistance = DistanceUtil.distance(oldEntity.getLat(), oldEntity.getLng(), newGps[1], newGps[0]);
+                double physicalDistance = DistanceUtil.distance(oldTempEntity.getLat(), oldTempEntity.getLng(), newGps[1], newGps[0]);
 
                 // D. 综合判定：IoU 达标 且 物理距离在合理范围内
                 if (pair.score >= 0.4 && physicalDistance <= maxSanityDistance) {
-                    log.info("【合并成功】实体ID: {}, 距离: {}m, IoU: {}", oldEntity.getId(), physicalDistance, pair.score);
+                    log.info("【合并成功】实体ID: {}, 距离: {}m, IoU: {}", oldTempEntity.getTempId(), physicalDistance, pair.score);
 
-                    saveSingleDefectDetail(event.getImageId(), pair.getNewDefect(), oldEntity.getId());
+                    saveSingleDefectDetail(event.getImageId(), pair.getNewDefect(), oldTempEntity.getTempId());
+
+                    oldTempEntity.setLng((oldTempEntity.getLng() + newGps[0]) / 2.0);
+                    oldTempEntity.setLat((oldTempEntity.getLat() + newGps[1]) / 2.0);
+                    stringRedisTemplate.opsForHash().put(
+                            "TaskTempEntities:" + event.getTaskId(),
+                            oldTempEntity.getTempId(),
+                            JSONUtil.toJsonStr(oldTempEntity)
+                    );
 
                     assignedNewDefects.add(pair.getNewDefect());
-                    assignedEntityIds.add(oldEntity.getId());
+                    assignedTempEntityIds.add(oldTempEntity.getTempId());
                 } else if (pair.score >= 0.4) {
                     log.warn("【阻断合并】视觉对齐 IoU={}, 但物理距离 {}m 超过限制，判定为误匹配", pair.score, physicalDistance);
                 }
@@ -253,7 +288,7 @@ public class DroneService {
 
         for (AiDetectionItem newDefect : aiResult.getDetections()) {
             if (!assignedNewDefects.contains(newDefect)) {
-                createNewEntity(newDefect, event);
+                handleNewTempEntity(newDefect, event);
             }
         }
 
@@ -261,28 +296,33 @@ public class DroneService {
     }
 
 
-    private void createNewEntity(AiDetectionItem newDefect, AiResultEvent event) {
+    private void handleNewTempEntity(AiDetectionItem newDefect, AiResultEvent event) {
+        // 1. 计算真实的 GPS 坐标
         double[] gps = GpsOffsetUtil.calculateRealGps(
                 event.getLng(), event.getLat(), event.getYaw(), event.getPitch(), event.getRoll(), event.getAltitude(), event.getFov(),
                 event.getAiResult().getImageWidth(), event.getAiResult().getImageHeight(), newDefect.getBbox());
 
-        log.info("【发现新病害实体】类型: {}, GPS: ({}, {})", newDefect.getClass_name(), gps[0], gps[1]);
+        double lng = gps[0];
+        double lat = gps[1];
 
-        DefectEntity newEntity = new DefectEntity();
-        newEntity.setDefectType(newDefect.getClass_name());
-        newEntity.setLng(gps[0]);
-        newEntity.setLat(gps[1]);
-        newEntity.setStatus("ACTIVE");
-        newEntity.setCreateTime(LocalDateTime.now());
-        entityMapper.insert(newEntity);
+        log.info("【发现新病害(暂存Redis)】类型: {}, GPS: ({}, {})", newDefect.getClass_name(), lng, lat);
 
-        saveSingleDefectDetail(event.getImageId(), newDefect, newEntity.getId());
+        // 2. 创建临时实体 DTO
+        TempEntityDTO tempDto = new TempEntityDTO(newDefect.getClass_id(), lng, lat);
+
+        // 3. 存入 Redis Hash 缓存
+        String redisKey = "TaskTempEntities:" + event.getTaskId();
+        stringRedisTemplate.opsForHash().put(redisKey, tempDto.getTempId(), JSONUtil.toJsonStr(tempDto));
+
+        // 4. 将病害详情落库
+        saveSingleDefectDetail(event.getImageId(), newDefect,  tempDto.getTempId());
     }
 
-    private void saveSingleDefectDetail(Long imageId, AiDetectionItem item, Long entityId) {
+    private void saveSingleDefectDetail(Long imageId, AiDetectionItem item, String tempId) {
         DefectDetail detail = new DefectDetail();
         detail.setImageId(imageId);
-        detail.setEntityId(entityId);
+        detail.setEntityId(null);
+        detail.setTempEntityId(tempId);
         detail.setDefectType(item.getClass_name());
         detail.setConfidence(item.getConfidence());
 

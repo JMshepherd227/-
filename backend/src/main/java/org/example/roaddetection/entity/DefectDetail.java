@@ -23,10 +23,11 @@ public class DefectDetail {
     private String roadName;
     private String address;
     private String addressDetail;
+    private String tempEntityId;
     @TableField(exist = false)
-    private String resultImageUrl; // 画了框的结果图
+    private String resultImageUrl;
     @TableField(exist = false)
-    private String originalImageUrl; // 原图
+    private String originalImageUrl;
     @TableField(exist = false)
-    private LocalDateTime captureTime; // 拍摄时间
+    private LocalDateTime captureTime;
 }

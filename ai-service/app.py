@@ -1,4 +1,5 @@
 import json
+import math
 import time
 from typing import List, Tuple, Optional
 import torch
@@ -139,17 +140,27 @@ def extract_feature(cv2_img: np.ndarray, bbox: List[float]) -> dict:
     return {"deep": deep, "hu": hu, "lbp": lbp}
 
 def normalize_coords(P_coords, Q_coords):
-    """GNN 全局安全归一化"""
     if len(P_coords) == 0 and len(Q_coords) == 0:
         return P_coords, Q_coords
-    all_pts = np.vstack([P_coords, Q_coords]) if len(P_coords)>0 and len(Q_coords)>0 else (P_coords if len(P_coords)>0 else Q_coords)
-    min_pt, max_pt = all_pts.min(axis=0), all_pts.max(axis=0)
-    center = (min_pt + max_pt) / 2.0
-    scale = np.max(max_pt - min_pt) / 2.0 + 1e-6
-    P_norm = (P_coords - center) / scale if len(P_coords) > 0 else P_coords
-    Q_norm = (Q_coords - center) / scale if len(Q_coords) > 0 else Q_coords
+
+    all_pts = np.vstack([P_coords, Q_coords])
+    center = (all_pts.min(axis=0) + all_pts.max(axis=0)) / 2.0
+
+    fixed_scale = 500.0
+
+    P_norm = (P_coords - center) / fixed_scale if len(P_coords) > 0 else P_coords
+    Q_norm = (Q_coords - center) / fixed_scale if len(Q_coords) > 0 else Q_coords
     return P_norm, Q_norm
 
+def latlon_to_meters(lat, lon, center_lat, center_lon):
+    """将经纬度近似转换为以 center 为原点的局部平面坐标（单位：米）"""
+    R = 6378137.0  # 地球半径（米）
+    d_lat = math.radians(lat - center_lat)
+    d_lon = math.radians(lon - center_lon)
+
+    y = d_lat * R
+    x = d_lon * R * math.cos(math.radians(center_lat))
+    return x, y
 
 # ======================== 4. 路由接口定义 ========================
 
@@ -248,28 +259,48 @@ async def match_points(req: MatchRequest):
             return MatchResponse(status="success", message="No new points to match.", results=[])
 
         if len(req.old_points) == 0:
-            # 没有旧病害，全员新增
             results = []
             for q in req.new_points:
                 cand = Candidate(rank=1, matched_old_id=None, confidence=1.0, is_new_disease=True)
                 results.append(MatchResultItem(new_id=q.id, candidates=[cand]))
             return MatchResponse(status="success", message="All considered new (no old points).", results=results)
 
-        # 2. 提取数据
+        # 2. 安全拦截：防止 type 越界导致 CUDA 崩溃
+        max_class_idx = matcher_config.N_CLASSES - 1
+        for p in req.old_points:
+            if p.type > max_class_idx or p.type < 0: p.type = 0
+        for q in req.new_points:
+            if q.type > max_class_idx or q.type < 0: q.type = 0
+
+        # 3. 获取基准坐标原点（经纬度），用于后续转换米级平面
+        ref_lon, ref_lat = req.old_points[0].x, req.old_points[0].y
+
         P_ids = [p.id for p in req.old_points]
         Q_ids = [q.id for q in req.new_points]
 
-        P_coords = np.array([[p.x, p.y] for p in req.old_points], dtype=np.float32)
-        Q_coords = np.array([[q.x, q.y] for q in req.new_points], dtype=np.float32)
+        # 4. 提取数据并将经纬度(x,y)转为局部米(meters)
+        P_coords = []
+        for p in req.old_points:
+            x_m, y_m = latlon_to_meters(p.y, p.x, ref_lat, ref_lon) # lat=y, lon=x
+            P_coords.append([x_m, y_m])
+
+        Q_coords = []
+        for q in req.new_points:
+            x_m, y_m = latlon_to_meters(q.y, q.x, ref_lat, ref_lon)
+            Q_coords.append([x_m, y_m])
+
+        P_coords = np.array(P_coords, dtype=np.float32)
+        Q_coords = np.array(Q_coords, dtype=np.float32)
+
         P_types = np.array([[p.type] for p in req.old_points], dtype=np.float32)
         Q_types = np.array([[q.type] for q in req.new_points], dtype=np.float32)
 
-        # 3. 归一化并拼接特征 [x_norm, y_norm, type_idx]
+        # 5. 归一化并拼接特征 [x_norm, y_norm, type_idx]
         P_norm_c, Q_norm_c = normalize_coords(P_coords, Q_coords)
         P_final = np.hstack([P_norm_c, P_types])
         Q_final = np.hstack([Q_norm_c, Q_types])
 
-        # 4. 转 Tensor 并推入模型
+        # 6. 转 Tensor 并推入模型
         P_t = torch.tensor(P_final).unsqueeze(0).to(device)
         Q_t = torch.tensor(Q_final).unsqueeze(0).to(device)
 
@@ -277,7 +308,7 @@ async def match_points(req: MatchRequest):
             logits = point_matcher(P_t, Q_t).squeeze(0)  # (Nq, Np+1)
             probs = torch.softmax(logits, dim=-1).cpu().numpy()
 
-        # 5. 生成 Top-K 候补名单
+        # 7. 生成 Top-K 候补名单
         results = []
         n_p = len(P_ids)
         TOP_K = min(3, n_p + 1)  # 返回前 3 个最可能的匹配

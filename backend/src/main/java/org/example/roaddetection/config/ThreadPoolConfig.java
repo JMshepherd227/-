@@ -23,4 +23,19 @@ public class ThreadPoolConfig {
         executor.initialize();
         return executor;
     }
+
+    @Bean("globalMatchExecutor")
+    public Executor globalMatchExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        int cores = Runtime.getRuntime().availableProcessors();
+        executor.setCorePoolSize(cores * 2);
+        executor.setMaxPoolSize(cores * 4);
+        executor.setQueueCapacity(200);
+        executor.setThreadNamePrefix("global-match-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(60);
+        executor.initialize();
+        return executor;
+    }
 }

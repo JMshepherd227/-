@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 public class DefectEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
-    private String defectType;
+    private int defectType;
     private Double lng;
     private Double lat;
     private String status;
