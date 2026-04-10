@@ -7,7 +7,6 @@ import org.example.roaddetection.dto.GnnMatchResponse;
 import org.example.roaddetection.dto.TempEntityDTO;
 import org.example.roaddetection.entity.DefectEntity;
 import org.example.roaddetection.events.TaskFinishEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -25,9 +24,7 @@ public class GlobalMatchService {
     private final TempEntityService tempEntityService;
 
     @Async("globalMatchExecutor")
-    @EventListener
-    public void onTaskFinished(TaskFinishEvent event) {
-        Long taskId = event.taskId();
+    public void executeGlobalMatch(Long taskId) {
         log.info("【启动全局对齐引擎】开始处理任务 ID: {}", taskId);
         String redisKey = "TaskTempEntities:" + taskId;
 
@@ -69,11 +66,15 @@ public class GlobalMatchService {
                 TempEntityDTO currentTempDto = newPointMap.get(newId);
                 boolean matched = false;
 
+                // 遍历 Top-K 候选人
                 for (GnnMatchResponse.Candidate candidate : item.getCandidates()) {
+                    double conf = candidate.getConfidence();
+
                     if (candidate.isNewDisease()) {
-                        if (candidate.getConfidence() > 0.5) {
+                        if (conf > 0.40) {
                             tempEntityService.saveAsNewDisease(newId, currentTempDto);
                             matched = true;
+                            log.info("判定为新增病害: {} (Conf: {})", newId, conf);
                             break;
                         }
                         continue;
@@ -82,24 +83,33 @@ public class GlobalMatchService {
                     String oldIdStr = candidate.getMatchedOldId();
                     Long oldEntityId = Long.parseLong(oldIdStr);
 
-                    if (candidate.getConfidence() > 0.85) {
+                    if (conf >= 0.7) {
                         tempEntityService.updateOldDisease(oldEntityId, newId);
                         matched = true;
                         break;
-                    } else if (candidate.getConfidence() > 0.20) {
-                        // 调用 SIFT 兜底验证
+                    }
+
+                    else if (conf >= 0.30) {
+                        log.info("GNN 犹豫中 (Conf: {})，启动 SIFT 视觉验证 {} -> {}", conf, newId, oldIdStr);
                         boolean isVisualMatch = tempEntityService.checkWithSift(oldEntityId, newId);
+
                         if (isVisualMatch) {
                             tempEntityService.updateOldDisease(oldEntityId, newId);
                             matched = true;
+                            log.info("   SIFT 验证通过 {} -> {}", newId, oldIdStr);
                             break;
                         } else {
-                            log.info("SIFT 拒绝了匹配 {} -> {}", newId, oldIdStr);
+                            log.info("   SIFT 否决了匹配 {} -> {}，尝试下一个候选...", newId, oldIdStr);
                         }
+                    }
+
+                    else {
+                        log.debug("   忽略低分候选 {} -> {} (Conf: {})", newId, oldIdStr, conf);
                     }
                 }
 
                 if (!matched) {
+                    log.info("所有匹配尝试均失败（或被视觉否决），转为新增病害: {}", newId);
                     tempEntityService.saveAsNewDisease(newId, currentTempDto);
                 }
             }

@@ -2,7 +2,6 @@ package org.example.roaddetection.service;
 
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,6 +14,7 @@ import org.example.roaddetection.dto.AiPredictResponse;
 import org.example.roaddetection.entity.DefectDetail;
 import org.example.roaddetection.entity.InspectionImage;
 import org.example.roaddetection.events.RoadInfoUpdateEvent;
+import org.example.roaddetection.manager.TaskStateManager;
 import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.InspectionImageMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
@@ -50,6 +50,8 @@ public class DroneService {
 
     private final StringRedisTemplate stringRedisTemplate;
 
+    private final TaskStateManager  taskStateManager;
+
     @Value("${drone.origin-dir}")
     private String originDir;
 
@@ -64,6 +66,7 @@ public class DroneService {
                                   Double altitude, Double yaw, Double pitch, Double roll, Double fov,
                                   MultipartFile file) throws Exception {
         log.info("【图片接收】无人机:{} 坐标:({}, {})", droneId, lng, lat);
+        taskStateManager.imageReceived(taskId);
         LocalDateTime now = LocalDateTime.now();
 
         String originalAbsolutePath = saveOriginalImage(file);
@@ -77,14 +80,18 @@ public class DroneService {
     /**
      * 监听 AI 处理结果事件
      */
-    @Async("aiTaskExecutor")
+    @Async("siftExecutor")
     @EventListener
     @Transactional(rollbackFor = Exception.class)
     public void onAiResult(AiResultEvent event) {
-        if (event.isSuccess()) {
-            saveDetectionResult(event);
-        } else {
-            markAsFailed(event.getImageId(), event.getErrorMsg());
+        try {
+            if (event.isSuccess()) {
+                saveDetectionResult(event);
+            } else {
+                markAsFailed(event.getImageId(), event.getErrorMsg());
+            }
+        } finally {
+            taskStateManager.imageProcessed(event.getTaskId());
         }
     }
 

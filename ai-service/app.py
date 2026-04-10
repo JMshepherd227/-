@@ -162,6 +162,17 @@ def latlon_to_meters(lat, lon, center_lat, center_lon):
     x = d_lon * R * math.cos(math.radians(center_lat))
     return x, y
 
+def sinkhorn(logits, iters=3):
+    """Sinkhorn 迭代逼近最优传输"""
+    P = torch.exp(logits)
+    for _ in range(iters):
+        # 行归一化（Q 的概率和为 1）
+        P = P / (P.sum(dim=1, keepdim=True) + 1e-8)
+        # 列归一化（除 Dustbin 外，P 的被选概率和为 1）
+        col_sums = P[:, :-1].sum(dim=0, keepdim=True)
+        P[:, :-1] = P[:, :-1] / (col_sums + 1e-8)
+    return P
+
 # ======================== 4. 路由接口定义 ========================
 
 @app.post("/get_homography/", response_model=HomographyResponse)
@@ -306,7 +317,8 @@ async def match_points(req: MatchRequest):
 
         with torch.no_grad():
             logits = point_matcher(P_t, Q_t).squeeze(0)  # (Nq, Np+1)
-            probs = torch.softmax(logits, dim=-1).cpu().numpy()
+            #probs = torch.softmax(logits, dim=-1).cpu().numpy()
+            probs = sinkhorn(logits).cpu().numpy()
 
         # 7. 生成 Top-K 候补名单
         results = []
@@ -321,6 +333,11 @@ async def match_points(req: MatchRequest):
             for rank, idx in enumerate(top_k_indices):
                 conf = float(probs[qi, idx])
                 is_new = (idx == n_p)
+
+                #if not is_new and conf < 0.45:
+                    #is_new = True
+                    #old_id = None
+
                 old_id = None if is_new else P_ids[idx]
 
                 candidates.append(Candidate(

@@ -11,7 +11,7 @@ def run_large_test():
 
     # 模拟 35 个真实病害的原始位置 (分布在 500m x 50m 的长条形区域内)
     true_points = []
-    for i in range(50):
+    for i in range(100):
         # 沿 X 方向拉长 (经度)，沿 Y 方向窄 (纬度)
         dx_m = random.uniform(0, 500)
         dy_m = random.uniform(-25, 25)
@@ -31,7 +31,7 @@ def run_large_test():
     off_y, off_x = 5.0 / 111000.0, 5.0 / 85000.0
 
     old_points = []
-    for i in range(50):
+    for i in range(20):
         old_points.append({
             "id": f"HIST_DB_{i:03d}",
             "x": true_points[i]["lon"] + off_x,
@@ -44,7 +44,7 @@ def run_large_test():
 
     # A. 20 个是匹配的 (取前 20 个，模拟本次巡检又看到了它们)
     # 模拟局部抖动 1.5 米
-    for i in range(50):
+    for i in range(20):
         noise_y = random.uniform(-1.5, 1.5) / 111000.0
         noise_x = random.uniform(-1.5, 1.5) / 85000.0
         new_points.append({
@@ -55,7 +55,7 @@ def run_large_test():
         })
 
     # B. 10 个是真正的新增病害 (随机撒在区域内)
-    for i in range(10):
+    for i in range(40):
         new_points.append({
             "id": f"UAV_NEW_PRO_{i:03d}",
             "x": base_lon + random.uniform(0, 500)/85000.0,
@@ -101,8 +101,8 @@ def run_large_test():
 
         print("-" * 70)
         print(f"📊 测试总结:")
-        print(f"   - 成功关联旧病害: {correct_match}/50")
-        print(f"   - 准确识别新病害: {new_identified}/10")
+        print(f"   - 成功关联旧病害: {correct_match}/20")
+        print(f"   - 准确识别新病害: {new_identified}/40")
 
     except Exception as e:
         print(f"❌ 请求失败: {e}")

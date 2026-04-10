@@ -13,6 +13,7 @@ import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.DefectEntityMapper;
 import org.example.roaddetection.mapper.InspectionImageMapper;
 import org.example.roaddetection.util.BboxUtil;
+import org.example.roaddetection.util.DistanceUtil;
 import org.example.roaddetection.util.HomographyUtil;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -128,26 +129,57 @@ public class TempEntityService {
      * 紧贴航线提取历史病害
      */
     public List<DefectEntity> fetchNearbyHistoricalDefects(List<TempEntityDTO> tempEntities) {
-        int chunkSize = 50;
-        double buffer = 10.0 / 111000.0;
+        if (tempEntities == null || tempEntities.isEmpty()) {
+            return new ArrayList<>();
+        }
 
-        Set<DefectEntity> resultSet = new HashSet<>();
+        double searchRadiusMeters = 15.0;
+        double buffer = searchRadiusMeters / 111000.0;
+
+        int chunkSize = 20;
+
+        Set<DefectEntity> rawResultSet = new HashSet<>();
+
         for (int i = 0; i < tempEntities.size(); i += chunkSize) {
             int end = Math.min(i + chunkSize, tempEntities.size());
             List<TempEntityDTO> chunk = tempEntities.subList(i, end);
 
-            double minLng = chunk.stream().mapToDouble(TempEntityDTO::getLng).min().orElse(0) - buffer;
-            double maxLng = chunk.stream().mapToDouble(TempEntityDTO::getLng).max().orElse(0) + buffer;
-            double minLat = chunk.stream().mapToDouble(TempEntityDTO::getLat).min().orElse(0) - buffer;
-            double maxLat = chunk.stream().mapToDouble(TempEntityDTO::getLat).max().orElse(0) + buffer;
+            LambdaQueryWrapper<DefectEntity> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(DefectEntity::getStatus, "ACTIVE");
 
-            resultSet.addAll(entityMapper.selectList(
-                    new LambdaQueryWrapper<DefectEntity>()
-                            .between(DefectEntity::getLng, minLng, maxLng)
-                            .between(DefectEntity::getLat, minLat, maxLat)
-                            .eq(DefectEntity::getStatus, "ACTIVE")
-            ));
+            wrapper.and(w -> {
+                for (TempEntityDTO dto : chunk) {
+                    w.or(ww -> ww
+                            .between(DefectEntity::getLng, dto.getLng() - buffer, dto.getLng() + buffer)
+                            .between(DefectEntity::getLat, dto.getLat() - buffer, dto.getLat() + buffer)
+                    );
+                }
+            });
+
+            rawResultSet.addAll(entityMapper.selectList(wrapper));
         }
-        return new ArrayList<>(resultSet);
+
+        List<DefectEntity> preciseResult = new ArrayList<>();
+
+        for (DefectEntity oldDefect : rawResultSet) {
+            boolean isNearby = false;
+            for (TempEntityDTO newDefect : tempEntities) {
+                double distance = DistanceUtil.distance(
+                        oldDefect.getLat(), oldDefect.getLng(),
+                        newDefect.getLat(), newDefect.getLng()
+                );
+
+                if (distance <= searchRadiusMeters) {
+                    isNearby = true;
+                    break;
+                }
+            }
+            if (isNearby) {
+                preciseResult.add(oldDefect);
+            }
+        }
+
+        log.info("【提取历史病害】数据库粗筛: {} 条, 内存精筛后: {} 条", rawResultSet.size(), preciseResult.size());
+        return preciseResult;
     }
 }

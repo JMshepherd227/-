@@ -13,6 +13,7 @@ import org.example.roaddetection.enums.DroneStatus;
 import org.example.roaddetection.enums.TaskStatus;
 import org.example.roaddetection.events.TaskFinishEvent;
 import org.example.roaddetection.handler.DroneWebSocketHandler;
+import org.example.roaddetection.manager.TaskStateManager;
 import org.example.roaddetection.mapper.DroneDeviceMapper;
 import org.example.roaddetection.mapper.InspectionTaskMapper;
 import org.example.roaddetection.service.InspectionTaskService;
@@ -33,6 +34,7 @@ public class InspectionTaskServiceImpl extends ServiceImpl<InspectionTaskMapper,
     private final ApplicationEventPublisher publisher;
     private final InspectionTaskMapper inspectionTaskMapper;
     private final DroneWebSocketHandler webSocketHandler;
+    private final TaskStateManager taskStateManager;
 
     /*
     结束任务
@@ -71,6 +73,8 @@ public class InspectionTaskServiceImpl extends ServiceImpl<InspectionTaskMapper,
                 droneId,
                 drone.getStatus()
         ));
+
+        taskStateManager.receiveFinishSignal(task.getId());
 
         log.info("任务已成功结束：TaskID={}, DroneID={}", task.getId(), droneId);
     }

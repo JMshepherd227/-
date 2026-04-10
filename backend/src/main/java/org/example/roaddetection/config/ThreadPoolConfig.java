@@ -38,4 +38,26 @@ public class ThreadPoolConfig {
         executor.initialize();
         return executor;
     }
+
+    @Bean(name = "siftExecutor")
+    public Executor siftExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(10);
+        executor.setMaxPoolSize(20);
+        executor.setQueueCapacity(500);
+        executor.setThreadNamePrefix("AI-Pipeline-");
+        executor.initialize();
+        return executor;
+    }
+
+    @Bean(name = "yoloExecutor")
+    public Executor yoloExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(10);
+        executor.setMaxPoolSize(20);
+        executor.setQueueCapacity(500);
+        executor.setThreadNamePrefix("AI-Pipeline-");
+        executor.initialize();
+        return executor;
+    }
 }
