@@ -5,7 +5,7 @@ spring:
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/drone_inspection?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
-    password: asdf520520.
+    password: Hgy100946
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   servlet:
@@ -15,7 +15,7 @@ spring:
 
   web:
     resources:
-      static-locations: classpath:/META-INF/resources/,classpath:/resources/,classpath:/static/,classpath:/public/,file:D:/work(work only)/python/UAVRoadDetection/result/
+      static-locations: classpath:/META-INF/resources/,classpath:/resources/,classpath:/static/,classpath:/public/,file:./result/
 
   data:
     redis:
@@ -47,10 +47,8 @@ mybatis-plus:
       table-underline: true
 
 drone:
-  # Linux / 生产环境
-  # origin-dir: /data/uav/origin
-  # Windows 本地开发（取消注释后使用）
-  origin-dir: D:\work(work only)\python\UAVRoadDetection/origin
+  # Windows 本地开发
+  origin-dir: ./origin
 
   # Python AI 推理服务地址
   ai-url: http://localhost:8000/predict/

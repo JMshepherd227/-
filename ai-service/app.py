@@ -15,7 +15,9 @@ import numpy as np
 
 app = FastAPI()
 
-model = YOLO("D:/work(work only)/python/UAVRoadDetection/ai-service/best.pt")
+# 使用相对路径加载模型，确保在不同环境下都能运行
+model_path = os.path.join(os.path.dirname(__file__), "best.pt")
+model = YOLO(model_path) 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 reid_model = models.resnet18(pretrained=True)
@@ -126,8 +128,9 @@ async def predict(
         r = results[0]
 
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        dir_name = "D:/work(work only)/python/UAVRoadDetection/result"
-        save_dir = os.path.join(dir_name, today)
+        # 使用相对于项目根目录的路径
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        save_dir = os.path.join(base_dir, "result", today)
         os.makedirs(save_dir, exist_ok=True)
 
         unique_id = uuid.uuid4().hex[:8]
@@ -164,9 +167,9 @@ async def predict(
         else:
             cv2.imwrite(full_save_path, cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR))
 
-        relative_path = f"{dir_name}/{today}/{filename}"
+        # 返回绝对路径，后端会通过 PathUtil 提取相对路径
         return PredictResponse(
-            filePath=relative_path,
+            filePath=full_save_path.replace("\\", "/"),
             detections=detections,
             detections_num=detections_num,
             message="Success",

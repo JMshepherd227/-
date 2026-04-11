@@ -29,6 +29,18 @@ let AMapRef = null
 let refreshTimer = null
 let markers = []
 const tileCache = new Map()
+let pickingEnabled = false
+let geocoder = null
+let drivingLive = null
+let drivingOriginal = null
+let livePath = []
+let originalPath = []
+let livePointMarkers = []
+let originalPointMarkers = []
+const WS_BASE = import.meta.env.VITE_WS_BASE || ''
+let droneMarkers = new Map()
+let droneTracks = new Map()
+let ws = null
 
 function loadAMap(key, sec) {
   return new Promise((resolve, reject) => {
@@ -36,7 +48,7 @@ function loadAMap(key, sec) {
     if (!key) { reject(new Error('Missing AMap key')); return }
     if (sec) { window._AMapSecurityConfig = { securityJsCode: sec } }
     const script = document.createElement('script')
-    script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(key)}&plugin=AMap.Scale,AMap.ToolBar,AMap.ControlBar`
+    script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(key)}`
     script.async = true
     script.onload = () => resolve(window.AMap)
     script.onerror = () => reject(new Error('AMap load failed'))
@@ -46,23 +58,217 @@ function loadAMap(key, sec) {
 
 onMounted(async () => {
   try {
+    if (!AMAP_KEY) throw new Error('未配置 VITE_AMAP_KEY')
     AMapRef = await loadAMap(AMAP_KEY, AMAP_SECURITY_JS_CODE)
+    if (!AMapRef || !AMapRef.Map) throw new Error('AMap 加载失败')
     mapInstance = new AMapRef.Map(mapEl.value, {
       viewMode: '2D',
       zoom: 11,
       center: [116.397428, 39.90923]
     })
-    mapInstance.addControl(new AMapRef.Scale())
-    mapInstance.addControl(new AMapRef.ToolBar())
-    mapInstance.addControl(new AMapRef.ControlBar())
+    AMapRef.plugin(['AMap.Scale','AMap.ToolBar','AMap.ControlBar'], () => {
+      try { mapInstance.addControl(new AMapRef.Scale()) } catch {}
+      try { mapInstance.addControl(new AMapRef.ToolBar()) } catch {}
+      try { mapInstance.addControl(new AMapRef.ControlBar()) } catch {}
+    })
     mapReady.value = true
     mapError.value = ''
 
     mapInstance.on('moveend', () => { if (autoLoad.value) scheduleLoad() })
     mapInstance.on('zoomend', () => { if (autoLoad.value) scheduleLoad() })
     scheduleLoad()
+    AMapRef.plugin(['AMap.Geocoder','AMap.Driving'], () => {
+      try { geocoder = new AMapRef.Geocoder() } catch {}
+      try {
+        drivingLive = new AMapRef.Driving({ map: mapInstance, policy: AMapRef.DrivingPolicy.LEAST_TIME, autoFitView: true, hideMarkers: false })
+        drivingOriginal = new AMapRef.Driving({ map: mapInstance, policy: AMapRef.DrivingPolicy.LEAST_TIME, autoFitView: true, hideMarkers: false })
+        if (drivingLive?.setRenderOptions) {
+          drivingLive.setRenderOptions({ polylineOptions: { strokeColor: '#2b78f2', strokeWeight: 5, isOutline: true, outlineColor: '#bcd2f9' } })
+        }
+        if (drivingOriginal?.setRenderOptions) {
+          drivingOriginal.setRenderOptions({ polylineOptions: { strokeColor: '#60a5fa', strokeWeight: 4, isOutline: true, outlineColor: 'rgba(0,0,0,0.2)' } })
+        }
+        if (drivingLive?.on) {
+          drivingLive.on('complete', () => { mapError.value = '' })
+          drivingLive.on('error', (e) => { mapError.value = (e && e.info) || '路线规划失败' })
+        }
+        if (drivingLive && livePath.length >= 2) {
+          const start = livePath[0]
+          const end = livePath[livePath.length - 1]
+          const waypoints = livePath.slice(1, livePath.length - 1)
+          try {
+            const S = new AMapRef.LngLat(start[0], start[1])
+            const E = new AMapRef.LngLat(end[0], end[1])
+            const W = waypoints.map(p => new AMapRef.LngLat(p[0], p[1]))
+            drivingLive.clear()
+            if (W.length) {
+              drivingLive.search(S, E, { waypoints: W }, (status, result) => {
+                if (status === 'complete') mapError.value = ''
+                else mapError.value = String(result?.info || result?.message || '路线规划失败')
+              })
+            } else {
+              drivingLive.search(S, E, (status, result) => {
+                if (status === 'complete') mapError.value = ''
+                else mapError.value = String(result?.info || result?.message || '路线规划失败')
+              })
+            }
+          } catch {}
+        }
+        if (drivingOriginal && originalPath.length >= 2) {
+          const startO = originalPath[0]
+          const endO = originalPath[originalPath.length - 1]
+          const waypointsO = originalPath.slice(1, originalPath.length - 1)
+          try {
+            const S = new AMapRef.LngLat(startO[0], startO[1])
+            const E = new AMapRef.LngLat(endO[0], endO[1])
+            const W = waypointsO.map(p => new AMapRef.LngLat(p[0], p[1]))
+            drivingOriginal.clear()
+            drivingOriginal.search(S, E, { waypoints: W }, (status, result) => {
+              if (status === 'complete') {
+                mapError.value = ''
+                if (originalFallbackLine) { try { mapInstance.remove(originalFallbackLine) } catch {} ; originalFallbackLine = null }
+              } else {
+                mapError.value = String(result?.info || result?.message || '路线规划失败')
+                try {
+                  if (!originalFallbackLine) { originalFallbackLine = new AMapRef.Polyline({ strokeColor: '#a7f3d0', strokeWeight: 3, isOutline: true, outlineColor: 'rgba(0,0,0,0.2)' }); mapInstance.add(originalFallbackLine) }
+                  originalFallbackLine.setPath(originalPath)
+                } catch {}
+              }
+            })
+          } catch {}
+        }
+      } catch {}
+    })
+    window.addEventListener('route-picking-toggle', (evt) => { pickingEnabled = !!(evt?.detail) })
+    window.addEventListener('route-points-clear', () => {
+      livePath = []
+      try { drivingLive && drivingLive.clear() } catch {}
+      try { if (livePointMarkers.length) { mapInstance.remove(livePointMarkers); livePointMarkers = [] } } catch {}
+    })
+    window.addEventListener('route-points-update', (evt) => {
+      const pts = Array.isArray(evt?.detail) ? evt.detail : []
+      livePath = pts.filter(p => Array.isArray(p) && p.length >= 2)
+      try { if (livePointMarkers.length) { mapInstance.remove(livePointMarkers); livePointMarkers = [] } } catch {}
+      for (let i = 0; i < livePath.length; i++) {
+        const pos = livePath[i]
+        try {
+          const m = new AMapRef.Marker({ position: pos, anchor: 'center' })
+          m.setLabel({ direction: 'top', offset: new AMapRef.Pixel(0, -8), content: `<div style="background:#2b78f2;color:#fff;padding:2px 6px;border-radius:999px;font-size:12px;">${i+1}</div>` })
+          livePointMarkers.push(m)
+        } catch {}
+      }
+      if (livePointMarkers.length) { try { mapInstance.add(livePointMarkers) } catch {} }
+      if (drivingLive) {
+        if (livePath.length >= 2) {
+          const start = livePath[0]
+          const end = livePath[livePath.length - 1]
+          const waypoints = livePath.slice(1, livePath.length - 1)
+          try {
+            const S = new AMapRef.LngLat(start[0], start[1])
+            const E = new AMapRef.LngLat(end[0], end[1])
+            const W = waypoints.map(p => new AMapRef.LngLat(p[0], p[1]))
+            drivingLive.clear()
+            if (W.length) {
+              drivingLive.search(S, E, { waypoints: W }, (status, result) => {
+                if (status === 'complete') mapError.value = ''
+                else mapError.value = String(result?.info || result?.message || '路线规划失败')
+              })
+            } else {
+              drivingLive.search(S, E, (status, result) => {
+                if (status === 'complete') mapError.value = ''
+                else mapError.value = String(result?.info || result?.message || '路线规划失败')
+              })
+            }
+          } catch {}
+        } else {
+          try { drivingLive.clear() } catch {}
+        }
+      }
+    })
+    window.addEventListener('route-original-set', (evt) => {
+      const pts = Array.isArray(evt?.detail) ? evt.detail : []
+      originalPath = pts.filter(p => Array.isArray(p) && p.length >= 2)
+      try { if (originalPointMarkers.length) { mapInstance.remove(originalPointMarkers); originalPointMarkers = [] } } catch {}
+      for (let i = 0; i < originalPath.length; i++) {
+        const pos = originalPath[i]
+        try {
+          const m = new AMapRef.Marker({ position: pos, anchor: 'center' })
+          m.setLabel({ direction: 'top', offset: new AMapRef.Pixel(0, -8), content: `<div style="background:#60a5fa;color:#111827;padding:2px 6px;border-radius:999px;font-size:12px;">${i+1}</div>` })
+          originalPointMarkers.push(m)
+        } catch {}
+      }
+      if (originalPointMarkers.length) { try { mapInstance.add(originalPointMarkers) } catch {} }
+      if (drivingOriginal && originalPath.length >= 2) {
+        const start = originalPath[0]
+        const end = originalPath[originalPath.length - 1]
+        const waypoints = originalPath.slice(1, originalPath.length - 1)
+        try {
+          const S = new AMapRef.LngLat(start[0], start[1])
+          const E = new AMapRef.LngLat(end[0], end[1])
+          const W = waypoints.map(p => new AMapRef.LngLat(p[0], p[1]))
+          drivingOriginal.clear()
+          if (W.length) {
+            drivingOriginal.search(S, E, { waypoints: W }, (status, result) => {
+              if (status === 'complete') mapError.value = ''
+              else mapError.value = String(result?.info || result?.message || '路线规划失败')
+            })
+          } else {
+            drivingOriginal.search(S, E, (status, result) => {
+              if (status === 'complete') mapError.value = ''
+              else mapError.value = String(result?.info || result?.message || '路线规划失败')
+            })
+          }
+        } catch {}
+      } else {
+        try { drivingOriginal && drivingOriginal.clear() } catch {}
+      }
+    })
+    mapInstance.on('click', (e) => {
+      if (!pickingEnabled) return
+      const lng = e?.lnglat?.lng, lat = e?.lnglat?.lat
+      if (typeof lng !== 'number' || typeof lat !== 'number') return
+      const addEvt = (addr) => { window.dispatchEvent(new CustomEvent('route-point-picked', { detail: { lng, lat, address: addr || '' } })) }
+      if (geocoder && geocoder.getAddress) {
+        try {
+          geocoder.getAddress([lng, lat], (status, result) => {
+            const addr = (result && result.regeocode && result.regeocode.formattedAddress) || ''
+            addEvt(addr)
+          })
+        } catch { addEvt('') }
+      } else { addEvt('') }
+      livePath.push([lng, lat])
+      try {
+        const m = new AMapRef.Marker({ position: [lng, lat], anchor: 'center' })
+        m.setLabel({ direction: 'top', offset: new AMapRef.Pixel(0, -8), content: `<div style="background:#2b78f2;color:#fff;padding:2px 6px;border-radius:999px;font-size:12px;">${livePath.length}</div>` })
+        livePointMarkers.push(m)
+        mapInstance.add(m)
+      } catch {}
+      if (drivingLive && livePath.length >= 2) {
+        const start = livePath[0]
+        const end = livePath[livePath.length - 1]
+        const waypoints = livePath.slice(1, livePath.length - 1)
+        try {
+          const S = new AMapRef.LngLat(start[0], start[1])
+          const E = new AMapRef.LngLat(end[0], end[1])
+          const W = waypoints.map(p => new AMapRef.LngLat(p[0], p[1]))
+          drivingLive.clear()
+            if (W.length) {
+              drivingLive.search(S, E, { waypoints: W }, (status, result) => {
+                if (status === 'complete') mapError.value = ''
+                else mapError.value = String(result?.info || result?.message || '路线规划失败')
+              })
+            } else {
+              drivingLive.search(S, E, (status, result) => {
+                if (status === 'complete') mapError.value = ''
+                else mapError.value = String(result?.info || result?.message || '路线规划失败')
+              })
+            }
+        } catch {}
+      }
+    })
+    connectTelemetryWS()
   } catch (e) {
-    mapError.value = e.message || '地图初始化失败'
+    mapError.value = e?.message || '地图初始化失败'
   }
 })
 
@@ -181,6 +387,61 @@ function updateMarkers(list) {
   mapInstance.add(markers)
 }
 
+function ensureDroneMarker(id) {
+  if (!mapInstance || !AMapRef) return null
+  const key = String(id)
+  let mk = droneMarkers.get(key)
+  if (!mk) {
+    mk = new AMapRef.Marker({ position: [0, 0], anchor: 'center', title: `无人机#${key}` })
+    droneMarkers.set(key, mk)
+    mapInstance.add(mk)
+  }
+  return mk
+}
+
+function updateDroneMarker(id, lng, lat) {
+  const mk = ensureDroneMarker(id)
+  if (!mk) return
+  mk.setPosition([lng, lat])
+}
+
+function appendTrack(id, lng, lat) {
+  if (!mapInstance || !AMapRef) return
+  const key = String(id)
+  let tr = droneTracks.get(key)
+  if (!tr) {
+    tr = { path: [], polyline: new AMapRef.Polyline({ strokeColor: '#34d399', strokeWeight: 3, isOutline: true, outlineColor: 'rgba(0,0,0,0.3)' }) }
+    droneTracks.set(key, tr)
+    mapInstance.add(tr.polyline)
+  }
+  tr.path.push([lng, lat])
+  if (tr.path.length > 2000) tr.path.splice(0, tr.path.length - 2000)
+  tr.polyline.setPath(tr.path)
+}
+
+function connectTelemetryWS() {
+  try {
+    const url = WS_BASE || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/telemetry`
+    if (ws) { try { ws.close() } catch {} ; ws = null }
+    ws = new WebSocket(url)
+    ws.onmessage = (evt) => {
+      const text = String(evt.data ?? '')
+      try {
+        const data = JSON.parse(text)
+        if (data && data.type === 'telemetry') {
+          const id = Number(data.droneId)
+          const Lng = Number(data.lng)
+          const Lat = Number(data.lat)
+          if (!Number.isNaN(id) && !Number.isNaN(Lng) && !Number.isNaN(Lat)) {
+            updateDroneMarker(id, Lng, Lat)
+            appendTrack(id, Lng, Lat)
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+}
+
 async function loadViewport() {
   if (!mapReady.value) return
   mapLoading.value = true
@@ -245,7 +506,7 @@ function closeDetail() {
       </div>
     </div>
     <div class="content">
-      <div class="map-wrap" v-show="active==='map'">
+      <div class="map-wrap">
         <div ref="mapEl" class="map-canvas"></div>
         <div class="map-toolbar">
           <button @click="loadViewport">刷新</button>
@@ -255,57 +516,61 @@ function closeDetail() {
           <span v-if="mapError" class="error">{{ mapError }}</span>
         </div>
 
-        <div class="drawer" v-if="selected">
+        <div class="drawer" :class="{ wide: active==='devices' || active==='ingest', narrow: active==='tasks' }" v-if="selected || active==='devices' || active==='tasks' || active==='ingest'">
           <div class="drawer-head">
-            <div class="drawer-title">病害详情</div>
-            <button class="secondary" @click="closeDetail">关闭</button>
+            <div class="drawer-title">
+              {{ active==='devices' ? '设备管理' : (active==='tasks' ? '任务管理' : (active==='ingest' ? '采集控制台' : '病害详情')) }}
+            </div>
+            <button class="secondary" @click="active='map'; selected=null">关闭</button>
           </div>
           <div class="drawer-body">
-            <div class="kv">
-              <div class="k">图片ID</div><div class="v">{{ selected.id }}</div>
-              <div class="k">任务ID</div><div class="v">{{ selected.taskId }}</div>
-              <div class="k">无人机ID</div><div class="v">{{ selected.droneId }}</div>
-              <div class="k">病害数</div><div class="v">{{ selected.defectCount ?? 0 }}</div>
-              <div class="k">状态</div><div class="v">{{ selected.status ?? '-' }}</div>
-              <div class="k">坐标</div>
-              <div class="v">{{ (selected.matchedLng ?? selected.rawLng) ?? '-' }}, {{ (selected.matchedLat ?? selected.rawLat) ?? '-' }}</div>
-            </div>
+            <DeviceManager v-if="active==='devices'" class="devices-root" />
+            <TaskManager v-else-if="active==='tasks'" class="tasks-root" />
+            <IngestConsole v-else-if="active==='ingest'" class="ingest-root" />
+            <template v-else>
+              <div class="kv">
+                <div class="k">图片ID</div><div class="v">{{ selected.id }}</div>
+                <div class="k">任务ID</div><div class="v">{{ selected.taskId }}</div>
+                <div class="k">无人机ID</div><div class="v">{{ selected.droneId }}</div>
+                <div class="k">病害数</div><div class="v">{{ selected.defectCount ?? 0 }}</div>
+                <div class="k">状态</div><div class="v">{{ selected.status ?? '-' }}</div>
+                <div class="k">坐标</div>
+                <div class="v">{{ (selected.matchedLng ?? selected.rawLng) ?? '-' }}, {{ (selected.matchedLat ?? selected.rawLat) ?? '-' }}</div>
+              </div>
 
-            <div class="imgs">
-              <a v-if="selected.originalImageUrl" class="img-link" :href="joinUrl(API_BASE, selected.originalImageUrl)" target="_blank" rel="noreferrer">
-                <div class="img-title">原图</div>
-                <img :src="joinUrl(API_BASE, selected.originalImageUrl)" alt="origin" />
-              </a>
-              <a v-if="selected.resultImageUrl" class="img-link" :href="joinUrl(API_BASE, selected.resultImageUrl)" target="_blank" rel="noreferrer">
-                <div class="img-title">结果图</div>
-                <img :src="joinUrl(API_BASE, selected.resultImageUrl)" alt="result" />
-              </a>
-            </div>
+              <div class="imgs">
+                <a v-if="selected.originalImageUrl" class="img-link" :href="joinUrl(API_BASE, selected.originalImageUrl)" target="_blank" rel="noreferrer">
+                  <div class="img-title">原图</div>
+                  <img :src="joinUrl(API_BASE, selected.originalImageUrl)" alt="origin" />
+                </a>
+                <a v-if="selected.resultImageUrl" class="img-link" :href="joinUrl(API_BASE, selected.resultImageUrl)" target="_blank" rel="noreferrer">
+                  <div class="img-title">结果图</div>
+                  <img :src="joinUrl(API_BASE, selected.resultImageUrl)" alt="result" />
+                </a>
+              </div>
 
-            <div class="detail">
-              <div class="detail-title">识别列表</div>
-              <div v-if="detailsLoading" class="muted">加载中…</div>
-              <div v-else-if="detailsError" class="error">{{ detailsError }}</div>
-              <div v-else-if="selectedDetails.length===0" class="muted">暂无详情</div>
-              <table v-else class="table">
-                <thead>
-                  <tr><th>类型</th><th>置信度</th><th>时间</th></tr>
-                </thead>
-                <tbody>
-                  <tr v-for="d in selectedDetails" :key="d.id">
-                    <td>{{ d.defectType }}</td>
-                    <td>{{ d.confidence }}</td>
-                    <td>{{ d.createTime ?? '-' }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+              <div class="detail">
+                <div class="detail-title">识别列表</div>
+                <div v-if="detailsLoading" class="muted">加载中…</div>
+                <div v-else-if="detailsError" class="error">{{ detailsError }}</div>
+                <div v-else-if="selectedDetails.length===0" class="muted">暂无详情</div>
+                <table v-else class="table">
+                  <thead>
+                    <tr><th>类型</th><th>置信度</th><th>时间</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="d in selectedDetails" :key="d.id">
+                      <td>{{ d.defectType }}</td>
+                      <td>{{ d.confidence }}</td>
+                      <td>{{ d.createTime ?? '-' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </template>
           </div>
         </div>
       </div>
-      <DeviceManager v-show="active==='devices'" class="devices-root" />
-      <TaskManager v-show="active==='tasks'" class="tasks-root" />
-      <IngestConsole v-show="active==='ingest'" class="ingest-root" />
     </div>
   </div>
 </template>
@@ -321,7 +586,9 @@ function closeDetail() {
 .map-wrap{flex:1;position:relative}
 .map-canvas{position:absolute;inset:0;z-index:0}
 .map-toolbar{position:absolute;left:12px;top:12px;z-index:20;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:rgba(17,24,39,0.9);border:1px solid #374151;border-radius:8px;padding:8px;color:#e5e7eb;max-width:calc(100% - 24px)}
-.drawer{position:absolute;right:12px;top:12px;bottom:12px;z-index:20;width:420px;background:rgba(17,24,39,0.96);border:1px solid #374151;border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+.drawer{position:absolute;right:0;top:0;bottom:0;z-index:20;width:520px;background:rgba(17,24,39,0.96);border:1px solid #374151;border-radius:0;display:flex;flex-direction:column;overflow:hidden}
+.drawer.wide{width:960px}
+.drawer.narrow{width:700px}
 .drawer-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #374151}
 .drawer-title{font-weight:600}
 .drawer-body{padding:12px;overflow:auto;display:flex;flex-direction:column;gap:12px}

@@ -30,20 +30,20 @@ import java.util.concurrent.TimeUnit;
 @RequestMapping("/api/v1/map")
 @RequiredArgsConstructor
 public class MapVisualizationController {
-    private final DefectEntityMapper defectEntityMapper;
+    private final InspectionImageMapper inspectionImageMapper;
     private final DefectDetailMapper defectDetailMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
     /**
-     *  获取视口内的病害点
+     *  获取视口内的图片打点
      * @param z 缩放等级
      * @param x 瓦片x坐标
      * @param y 瓦片y坐标
-     * @return 包含病害点的接口响应
+     * @return 包含巡检图片的接口响应
      */
     @GetMapping("/tile")
-    public Result<List<DefectEntity>> getDefectsInViewport(
+    public Result<List<InspectionImage>> getDefectsInViewport(
             @RequestParam int z,
             @RequestParam int x,
             @RequestParam int y
@@ -73,7 +73,7 @@ public class MapVisualizationController {
                     }
 
                     try {
-                        List<DefectEntity> cachedData = objectMapper.readValue(json, new TypeReference<List<DefectEntity>>() {});
+                        List<InspectionImage> cachedData = objectMapper.readValue(json, new TypeReference<List<InspectionImage>>() {});
                         return Result.success(cachedData);
                     } catch (Exception e) {
                         log.error("反序列化失败，删除缓存: {}", cacheKey, e);
@@ -88,8 +88,8 @@ public class MapVisualizationController {
                     log.warn("获取锁成功，未命中缓存，正在查询数据库...");
                     try {
                         // 查询数据库
-                        List<DefectEntity> dbData =
-                                defectEntityMapper.selectEntitiesInViewport(minLat, maxLat, minLng, maxLng);
+                        List<InspectionImage> dbData =
+                                inspectionImageMapper.selectImagesInViewport(minLat, maxLat, minLng, maxLng);
                         // 防穿透
                         if (dbData == null || dbData.isEmpty()) {
                             stringRedisTemplate.opsForValue().set(cacheKey, "[]", 120, TimeUnit.SECONDS);
