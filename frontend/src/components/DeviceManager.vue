@@ -29,21 +29,18 @@ async function getList() {
 
 const formVisible = ref(false)
 const formMode = ref('create')
-const form = reactive({ id: null, droneName: '', status: 0, lastLng: '', lastLat: '' })
+const form = reactive({ id: null, droneName: '' })
 
 function openCreate() {
   formMode.value = 'create'
-  Object.assign(form, { id: null, droneName: '', status: 0, lastLng: '', lastLat: '' })
+  Object.assign(form, { id: null, droneName: '' })
   formVisible.value = true
 }
 function openEdit(item) {
   formMode.value = 'edit'
   Object.assign(form, {
     id: item.id,
-    droneName: item.droneName || '',
-    status: item.status ?? 0,
-    lastLng: item.lastLng ?? '',
-    lastLat: item.lastLat ?? ''
+    droneName: item.droneName || ''
   })
   formVisible.value = true
 }
@@ -51,10 +48,8 @@ function openEdit(item) {
 async function submitForm() {
   if (!validateForm()) return
   const payload = {
-    droneName: form.droneName,
-    status: Number(form.status),
-    lastLng: form.lastLng === '' ? null : Number(form.lastLng),
-    lastLat: form.lastLat === '' ? null : Number(form.lastLat)
+    droneName: (form.droneName || '').trim(),
+    status: 0
   }
   try {
     let url, method
@@ -85,14 +80,6 @@ async function submitForm() {
 function validateForm() {
   const name = (form.droneName || '').trim()
   if (!name) { error.value = '名称不能为空'; return false }
-  if (form.lastLng !== '') {
-    const lng = Number(form.lastLng)
-    if (Number.isNaN(lng) || lng < -180 || lng > 180) { error.value = '经度需为 -180~180 的数值'; return false }
-  }
-  if (form.lastLat !== '') {
-    const lat = Number(form.lastLat)
-    if (Number.isNaN(lat) || lat < -90 || lat > 90) { error.value = '纬度需为 -90~90 的数值'; return false }
-  }
   return true
 }
 
@@ -130,8 +117,6 @@ onMounted(getList)
             <th>ID</th>
             <th>名称</th>
             <th>状态</th>
-            <th>经度</th>
-            <th>纬度</th>
             <th>创建时间</th>
             <th>更新时间</th>
             <th>操作</th>
@@ -142,13 +127,11 @@ onMounted(getList)
             <td>{{ d.id }}</td>
             <td>{{ d.droneName }}</td>
             <td>{{ statusText(d.status) }}</td>
-            <td>{{ d.lastLng ?? '-' }}</td>
-            <td>{{ d.lastLat ?? '-' }}</td>
             <td>{{ d.createTime ?? '-' }}</td>
             <td>{{ d.updateTime ?? '-' }}</td>
             <td>
               <button @click="openEdit(d)">编辑</button>
-              <button @click="removeDevice(d.id)">删除</button>
+              <button class="danger" @click="removeDevice(d.id)">删除</button>
             </td>
           </tr>
         </tbody>
@@ -163,19 +146,6 @@ onMounted(getList)
           <label>名称
             <input v-model="form.droneName" placeholder="请输入无人机名称" />
           </label>
-          <label>状态
-            <select v-model="form.status">
-              <option :value="0">空闲</option>
-              <option :value="1">任务中</option>
-              <option :value="2">维护中</option>
-            </select>
-          </label>
-          <label>经度
-            <input type="number" step="0.000001" v-model="form.lastLng" placeholder="-180~180，可选" />
-          </label>
-          <label>纬度
-            <input type="number" step="0.000001" v-model="form.lastLat" placeholder="-90~90，可选" />
-          </label>
         </div>
         <div class="dialog-actions">
           <button @click="submitForm">保存</button>
@@ -188,19 +158,21 @@ onMounted(getList)
 
 <style scoped>
 .devices{display:flex;flex-direction:column;height:100%;padding:12px;box-sizing:border-box;color:#e5e7eb}
-.toolbar{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:12px;background:rgba(17,24,39,0.9);border:1px solid #374151;border-radius:8px;padding:8px}
 .table-wrap{flex:1;overflow:auto}
 .table{width:100%;border-collapse:collapse}
 .table th,.table td{border:1px solid #334155;padding:8px}
 .table thead{background:#1f2937}
-button{background:#2563eb;color:#fff;border:none;padding:6px 12px;cursor:pointer;border-radius:4px}
-button+button{margin-left:8px;background:#ef4444}
+.table tbody tr:nth-child(odd){background:#0b0f19}
+.table tbody tr:hover{background:#0f172a}
+button{background:#2563eb;color:#fff;border:none;padding:6px 12px;cursor:pointer;border-radius:6px}
+button.danger{background:#ef4444}
 .muted{color:#9ca3af;margin-left:8px}
 .error{color:#f87171;margin-left:8px}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center}
-.dialog{width:420px;background:#111827;border:1px solid #374151;border-radius:8px;padding:16px}
+.dialog{width:420px;background:#111827;border:1px solid #374151;border-radius:10px;padding:16px}
 .dialog-title{font-weight:600;margin-bottom:12px}
 .dialog-body label{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
-.dialog-body input,.dialog-body select{padding:8px;background:#0b0f19;border:1px solid #374151;color:#e5e7eb;border-radius:4px}
+.dialog-body input,.dialog-body select{padding:8px;background:#0b0f19;border:1px solid #374151;color:#e5e7eb;border-radius:6px}
 .dialog-actions{display:flex;justify-content:flex-end;gap:8px}
 </style>

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
@@ -54,64 +54,49 @@ async function getList() {
   }
 }
 
+const panelMode = ref('list')
+const pickingEnabled = ref(false)
+const routePoints = ref([])
 const formVisible = ref(false)
 const formMode = ref('create')
 const form = reactive({
   id: null,
   taskName: '',
-  droneId: '',
-  routePointsText: '[]'
+  droneId: ''
 })
 
 function openCreate() {
   formMode.value = 'create'
-  Object.assign(form, { id: null, taskName: '', droneId: '', routePointsText: '[]' })
-  formVisible.value = true
+  Object.assign(form, { id: null, taskName: '', droneId: '' })
+  routePoints.value = []
+  pickingEnabled.value = false
+  window.dispatchEvent(new CustomEvent('route-picking-toggle', { detail: false }))
+  window.dispatchEvent(new CustomEvent('route-points-clear'))
+  window.dispatchEvent(new CustomEvent('route-original-set', { detail: [] }))
+  panelMode.value = 'form'
 }
 
 function openEdit(row) {
   formMode.value = 'edit'
-  const rp = row.routePoints ? JSON.stringify(row.routePoints, null, 2) : '[]'
+  const rp = Array.isArray(row.routePoints) ? row.routePoints : []
+  routePoints.value = rp.map(p => ({ lng: Number(p.lng), lat: Number(p.lat), address: String(p.address || '') }))
+  window.dispatchEvent(new CustomEvent('route-picking-toggle', { detail: false }))
+  window.dispatchEvent(new CustomEvent('route-original-set', { detail: rp.map(p => [Number(p.lng), Number(p.lat)]) }))
   Object.assign(form, {
     id: row.id,
     taskName: row.taskName || '',
-    droneId: row.droneId || '',
-    routePointsText: rp
+    droneId: row.droneId || ''
   })
-  formVisible.value = true
+  pickingEnabled.value = false
+  panelMode.value = 'form'
 }
 
-function parseRoutePoints(text) {
-  try {
-    const arr = JSON.parse(text)
-    if (!Array.isArray(arr)) throw new Error('routePoints 必须是数组')
-    for (const it of arr) {
-      if (typeof it !== 'object' || it === null) throw new Error('每个点应为对象')
-      const lng = Number(it.lng)
-      const lat = Number(it.lat)
-      if (Number.isNaN(lng) || Number.isNaN(lat)) throw new Error('点位需包含数值 lng/lat')
-      if (lng < -180 || lng > 180) throw new Error('经度需在 -180~180')
-      if (lat < -90 || lat > 90) throw new Error('纬度需在 -90~90')
-    }
-    return arr
-  } catch (e) {
-    throw new Error(e.message || 'routePoints 解析失败')
-  }
-}
 
 async function submitForm() {
   error.value = ''
   if (!form.taskName.trim()) { error.value = '任务名称不能为空'; return }
   if (!form.droneId) { error.value = '请选择无人机'; return }
-  let routePoints = []
-  try {
-    routePoints = parseRoutePoints(form.routePointsText)
-  } catch (e) {
-    error.value = e.message
-    return
-  }
-
-  const payload = { taskName: form.taskName.trim(), droneId: Number(form.droneId), routePoints }
+  const payload = { taskName: form.taskName.trim(), droneId: Number(form.droneId), routePoints: routePoints.value }
   try {
     let url, method
     if (formMode.value === 'create') {
@@ -128,7 +113,9 @@ async function submitForm() {
     })
     const json = await res.json()
     if (json && json.code === 200) {
-      formVisible.value = false
+      panelMode.value = 'list'
+      pickingEnabled.value = false
+      window.dispatchEvent(new CustomEvent('route-picking-toggle', { detail: false }))
       await getList()
     } else {
       throw new Error(json?.msg || '保存失败')
@@ -136,6 +123,19 @@ async function submitForm() {
   } catch (e) {
     error.value = e.message || '请求失败'
   }
+}
+
+function startPicking() {
+  pickingEnabled.value = true
+  window.dispatchEvent(new CustomEvent('route-picking-toggle', { detail: true }))
+}
+function stopPicking() {
+  pickingEnabled.value = false
+  window.dispatchEvent(new CustomEvent('route-picking-toggle', { detail: false }))
+}
+function clearRoutePoints() {
+  routePoints.value = []
+  window.dispatchEvent(new CustomEvent('route-points-clear'))
 }
 
 async function startTask(row) {
@@ -185,7 +185,22 @@ async function removeTask(row) {
 onMounted(async () => {
   await loadDevices()
   await getList()
+  window.addEventListener('route-point-picked', (evt) => {
+    try {
+      const d = evt.detail || {}
+      const lng = Number(d.lng), lat = Number(d.lat)
+      const address = String(d.address || '')
+      if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
+        routePoints.value.push({ lng, lat, address })
+      }
+    } catch {}
+  })
 })
+
+watch(routePoints, (list) => {
+  const pts = list.map(p => [Number(p.lng), Number(p.lat)]).filter(a => !Number.isNaN(a[0]) && !Number.isNaN(a[1]))
+  window.dispatchEvent(new CustomEvent('route-points-update', { detail: pts }))
+}, { deep: true })
 </script>
 
 <template>
@@ -210,7 +225,7 @@ onMounted(async () => {
       <span v-if="error" class="error">{{ error }}</span>
     </div>
 
-    <div class="table-wrap">
+    <div class="table-wrap" v-if="panelMode==='list'">
       <table class="table">
         <thead>
           <tr>
@@ -245,7 +260,7 @@ onMounted(async () => {
       <div v-if="!loading && tasks.length===0" class="muted">暂无任务</div>
     </div>
 
-    <div v-if="formVisible" class="modal">
+    <div v-if="panelMode==='form'" class="panel-form">
       <div class="dialog">
         <div class="dialog-title">{{ formMode === 'create' ? '新建任务' : '编辑任务' }}</div>
         <div class="dialog-body">
@@ -258,13 +273,30 @@ onMounted(async () => {
               <option v-for="d in devices" :key="d.id" :value="d.id">{{ d.droneName }}</option>
             </select>
           </label>
-          <label>航线点位(JSON 数组，元素含 lng/lat)
-            <textarea v-model="form.routePointsText" rows="8" placeholder='例如: [{"lng":116.39,"lat":39.90}]'></textarea>
-          </label>
+          <div>
+            <div class="detail-title">航线点位</div>
+            <div class="muted">在地图上点击选点，自动识别地址</div>
+            <table class="table" v-if="routePoints.length">
+              <thead><tr><th>#</th><th>经度</th><th>纬度</th><th>地址</th></tr></thead>
+              <tbody>
+                <tr v-for="(p,i) in routePoints" :key="i">
+                  <td>{{ i+1 }}</td>
+                  <td>{{ p.lng }}</td>
+                  <td>{{ p.lat }}</td>
+                  <td>{{ p.address || '-' }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="dialog-actions">
+              <button @click="startPicking" v-if="!pickingEnabled">开始选点</button>
+              <button @click="stopPicking" v-else>停止选点</button>
+              <button class="secondary" @click="clearRoutePoints">清空点位</button>
+            </div>
+          </div>
         </div>
         <div class="dialog-actions">
           <button @click="submitForm">保存</button>
-          <button @click="formVisible=false">取消</button>
+          <button class="secondary" @click="panelMode='list'; stopPicking()">取消</button>
         </div>
       </div>
     </div>
@@ -273,10 +305,10 @@ onMounted(async () => {
 
 <style scoped>
 .tasks{display:flex;flex-direction:column;height:100%;padding:12px;box-sizing:border-box;color:#e5e7eb}
-.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
-.input,.select,.num,textarea{padding:8px;background:#0b0f19;border:1px solid #374151;color:#e5e7eb;border-radius:4px}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px;background:rgba(17,24,39,0.9);border:1px solid #374151;border-radius:8px;padding:8px}
+.input,.select,.num,textarea{padding:8px;background:#0b0f19;border:1px solid #374151;color:#e5e7eb;border-radius:6px}
 .num{width:120px}
-button{background:#2563eb;color:#fff;border:none;padding:6px 12px;cursor:pointer;border-radius:4px}
+button{background:#2563eb;color:#fff;border:none;padding:6px 12px;cursor:pointer;border-radius:6px}
 button.danger{background:#ef4444}
 .muted{color:#9ca3af;margin-left:8px}
 .error{color:#f87171;margin-left:8px}
@@ -284,9 +316,10 @@ button.danger{background:#ef4444}
 .table{width:100%;border-collapse:collapse}
 .table th,.table td{border:1px solid #334155;padding:8px;vertical-align:top}
 .table thead{background:#1f2937}
+.table tbody tr:nth-child(odd){background:#0b0f19}
+.table tbody tr:hover{background:#0f172a}
 .ops button+button{margin-left:6px}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center}
-.dialog{width:680px;max-width:90vw;background:#111827;border:1px solid #374151;border-radius:8px;padding:16px}
+.panel-form .dialog{width:auto;max-width:none;background:transparent;border:none;border-radius:0;padding:0}
 .dialog-title{font-weight:600;margin-bottom:12px}
 .dialog-body label{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
 .dialog-body input,.dialog-body select,textarea{font-family:inherit}
