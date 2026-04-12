@@ -96,7 +96,7 @@ async function submitForm() {
   error.value = ''
   if (!form.taskName.trim()) { error.value = '任务名称不能为空'; return }
   if (!form.droneId) { error.value = '请选择无人机'; return }
-  const payload = { taskName: form.taskName.trim(), droneId: Number(form.droneId), routePoints: routePoints.value }
+  const payload = { taskName: form.taskName.trim(), droneId: Number(form.droneId), routePoints: routePoints.value.map(({ lng, lat }) => ({ lng, lat })) }
   try {
     let url, method
     if (formMode.value === 'create') {

@@ -51,85 +51,101 @@ public class MapVisualizationController {
     ) {
         String cacheKey = String.format("map:tile:%d:%d:%d", z, x, y);
         String lockKey = "lock:" + cacheKey;
-
         int maxRetries = 5;
 
         TileBBox bbox = TileUtil.tileToBBox(z, x, y);
-
         double maxLng = bbox.getMaxLng();
         double maxLat = bbox.getMaxLat();
         double minLng = bbox.getMinLng();
         double minLat = bbox.getMinLat();
 
+        String luaScript =
+                "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+                "   return redis.call('del', KEYS[1]) " +
+                "else return 0 end";
+
         try {
             for (int retryCount = 0; retryCount < maxRetries; retryCount++) {
-                String json = stringRedisTemplate.opsForValue().get(cacheKey);
 
+                // ① 先尝试读缓存
+                String json = stringRedisTemplate.opsForValue().get(cacheKey);
                 if (json != null) {
                     log.info("命中 Redis 缓存: {}", cacheKey);
-
-                    //防穿透
-                    if (json.equals("[]")) {
+                    if ("[]".equals(json)) {
                         return Result.success(Collections.emptyList());
                     }
-
                     try {
-                        List<InspectionImage> cachedData = objectMapper.readValue(json, new TypeReference<List<InspectionImage>>() {});
+                        List<InspectionImage> cachedData = objectMapper.readValue(
+                                json, new TypeReference<List<InspectionImage>>() {});
                         return Result.success(cachedData);
                     } catch (Exception e) {
                         log.error("反序列化失败，删除缓存: {}", cacheKey, e);
                         stringRedisTemplate.delete(cacheKey);
+                        // 反序列化失败后继续走抢锁逻辑，不要直接 break
                     }
                 }
 
+                // ② 缓存未命中，尝试抢锁
                 String lockValue = UUID.randomUUID().toString();
-                Boolean locked = stringRedisTemplate.opsForValue().setIfAbsent(lockKey, lockValue, 10, TimeUnit.SECONDS);
+                Boolean locked = stringRedisTemplate.opsForValue()
+                        .setIfAbsent(lockKey, lockValue, 10, TimeUnit.SECONDS);
 
                 if (Boolean.TRUE.equals(locked)) {
-                    log.warn("获取锁成功，未命中缓存，正在查询数据库...");
+                    log.info("获取锁成功，准备查询数据库: {}", cacheKey);
                     try {
-                        // 查询数据库
+                        // ③ Double-Check：抢到锁后再查一次缓存
+                        //    防止前一个持锁线程刚写完缓存、自己却重复查 DB
+                        String jsonAfterLock = stringRedisTemplate.opsForValue().get(cacheKey);
+                        if (jsonAfterLock != null) {
+                            log.info("Double-Check 命中缓存，无需查库: {}", cacheKey);
+                            if ("[]".equals(jsonAfterLock)) {
+                                return Result.success(Collections.emptyList());
+                            }
+                            List<InspectionImage> cachedData = objectMapper.readValue(
+                                    jsonAfterLock, new TypeReference<List<InspectionImage>>() {});
+                            return Result.success(cachedData);
+                        }
+
+                        // ④ 确认缓存真的没有，查数据库
                         List<InspectionImage> dbData =
                                 inspectionImageMapper.selectImagesInViewport(minLat, maxLat, minLng, maxLng);
-                        // 防穿透
+
                         if (dbData == null || dbData.isEmpty()) {
+                            // 防穿透：空结果也缓存，但 TTL 短一些
                             stringRedisTemplate.opsForValue().set(cacheKey, "[]", 120, TimeUnit.SECONDS);
                             return Result.success(Collections.emptyList());
                         }
-                        // 转JSON
-                        String jsonData = objectMapper.writeValueAsString(dbData);
-                        // 随机 TTL
-                        int ttl = 300 + ThreadLocalRandom.current().nextInt(60);
 
+                        // ⑤ 写缓存，随机 TTL 防雪崩
+                        String jsonData = objectMapper.writeValueAsString(dbData);
+                        int ttl = 300 + ThreadLocalRandom.current().nextInt(60);
                         stringRedisTemplate.opsForValue().set(cacheKey, jsonData, ttl, TimeUnit.SECONDS);
                         log.info("写入 Redis 缓存: {}", cacheKey);
 
                         return Result.success(dbData);
-                    } finally {
-                        // 确保只释放自己的锁
-                        String luaScript =
-                                "if redis.call('get', KEYS[1]) == ARGV[1] then " +
-                                "   return redis.call('del', KEYS[1]) " +
-                                "else return 0 end";
 
-                        redisTemplate.execute(
+                    } finally {
+                        // ⑥ 用 stringRedisTemplate 释放锁，与加锁保持同一序列化方式
+                        stringRedisTemplate.execute(
                                 new DefaultRedisScript<>(luaScript, Long.class),
                                 Collections.singletonList(lockKey),
                                 lockValue
                         );
                     }
+
                 } else {
-                    // 没有拿到锁，说明有其他线程正在查数据库，休眠 50ms 后进入下一次 while 循环重试
+                    // ⑦ 没抢到锁，说明其他线程正在查库，短暂等待后重试
+                    log.debug("未获取到锁，等待重试 ({}/{}): {}", retryCount + 1, maxRetries, cacheKey);
                     try {
                         Thread.sleep(200);
                     } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();  // 恢复中断标志
+                        Thread.currentThread().interrupt();
                         return Result.fail("查询被中断");
                     }
                 }
             }
 
-            log.error("系统繁忙，等待获取缓存锁超时: {}", cacheKey);
+            log.error("超出最大重试次数，获取缓存锁超时: {}", cacheKey);
             return Result.fail("当前查看该区域的人数过多，系统繁忙，请稍后再试");
 
         } catch (Exception e) {
