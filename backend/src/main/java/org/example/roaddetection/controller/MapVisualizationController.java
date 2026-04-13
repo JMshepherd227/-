@@ -1,20 +1,16 @@
 package org.example.roaddetection.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.roaddetection.common.Result;
 import org.example.roaddetection.common.TileBBox;
+import org.example.roaddetection.entity.DefectDetail;
 import org.example.roaddetection.entity.DefectEntity;
+import org.example.roaddetection.mapper.DefectDetailMapper;
 import org.example.roaddetection.mapper.DefectEntityMapper;
 import org.example.roaddetection.util.TileUtil;
-import org.example.roaddetection.entity.DefectDetail;
-import org.example.roaddetection.entity.InspectionImage;
-import org.example.roaddetection.mapper.DefectDetailMapper;
-import org.example.roaddetection.mapper.InspectionImageMapper;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,20 +27,22 @@ import java.util.concurrent.TimeUnit;
 @RequestMapping("/api/v1/map")
 @RequiredArgsConstructor
 public class MapVisualizationController {
-    private final InspectionImageMapper inspectionImageMapper;
+
+    private final DefectEntityMapper defectEntityMapper;
     private final DefectDetailMapper defectDetailMapper;
-    private final RedisTemplate<String, Object> redisTemplate;
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
+
     /**
-     *  获取视口内的图片打点
+     * 获取视口内的病害实体打点
+     *
      * @param z 缩放等级
      * @param x 瓦片x坐标
      * @param y 瓦片y坐标
-     * @return 包含巡检图片的接口响应
+     * @return 包含病害实体列表的接口响应
      */
     @GetMapping("/tile")
-    public Result<List<InspectionImage>> getDefectsInViewport(
+    public Result<List<DefectEntity>> getDefectsInViewport(
             @RequestParam int z,
             @RequestParam int x,
             @RequestParam int y
@@ -75,13 +73,12 @@ public class MapVisualizationController {
                         return Result.success(Collections.emptyList());
                     }
                     try {
-                        List<InspectionImage> cachedData = objectMapper.readValue(
-                                json, new TypeReference<List<InspectionImage>>() {});
+                        List<DefectEntity> cachedData = objectMapper.readValue(
+                                json, new TypeReference<List<DefectEntity>>() {});
                         return Result.success(cachedData);
                     } catch (Exception e) {
                         log.error("反序列化失败，删除缓存: {}", cacheKey, e);
                         stringRedisTemplate.delete(cacheKey);
-                        // 反序列化失败后继续走抢锁逻辑，不要直接 break
                     }
                 }
 
@@ -94,24 +91,22 @@ public class MapVisualizationController {
                     log.info("获取锁成功，准备查询数据库: {}", cacheKey);
                     try {
                         // ③ Double-Check：抢到锁后再查一次缓存
-                        //    防止前一个持锁线程刚写完缓存、自己却重复查 DB
                         String jsonAfterLock = stringRedisTemplate.opsForValue().get(cacheKey);
                         if (jsonAfterLock != null) {
                             log.info("Double-Check 命中缓存，无需查库: {}", cacheKey);
                             if ("[]".equals(jsonAfterLock)) {
                                 return Result.success(Collections.emptyList());
                             }
-                            List<InspectionImage> cachedData = objectMapper.readValue(
-                                    jsonAfterLock, new TypeReference<List<InspectionImage>>() {});
+                            List<DefectEntity> cachedData = objectMapper.readValue(
+                                    jsonAfterLock, new TypeReference<List<DefectEntity>>() {});
                             return Result.success(cachedData);
                         }
 
-                        // ④ 确认缓存真的没有，查数据库
-                        List<InspectionImage> dbData =
-                                inspectionImageMapper.selectImagesInViewport(minLat, maxLat, minLng, maxLng);
+                        // ④ 查数据库
+                        List<DefectEntity> dbData =
+                                defectEntityMapper.selectEntitiesInViewport(minLat, maxLat, minLng, maxLng);
 
                         if (dbData == null || dbData.isEmpty()) {
-                            // 防穿透：空结果也缓存，但 TTL 短一些
                             stringRedisTemplate.opsForValue().set(cacheKey, "[]", 120, TimeUnit.SECONDS);
                             return Result.success(Collections.emptyList());
                         }
@@ -125,7 +120,7 @@ public class MapVisualizationController {
                         return Result.success(dbData);
 
                     } finally {
-                        // ⑥ 用 stringRedisTemplate 释放锁，与加锁保持同一序列化方式
+                        // ⑥ 释放锁
                         stringRedisTemplate.execute(
                                 new DefaultRedisScript<>(luaScript, Long.class),
                                 Collections.singletonList(lockKey),
@@ -134,7 +129,6 @@ public class MapVisualizationController {
                     }
 
                 } else {
-                    // ⑦ 没抢到锁，说明其他线程正在查库，短暂等待后重试
                     log.debug("未获取到锁，等待重试 ({}/{}): {}", retryCount + 1, maxRetries, cacheKey);
                     try {
                         Thread.sleep(200);
@@ -154,10 +148,9 @@ public class MapVisualizationController {
         }
     }
 
-
     /**
      * 获取病害实体的所有历史观测记录（自带图片URL，按时间倒序）
-     * 图片url为相对路径，需要项目根路径+图片url进行拼接
+     *
      * @param entityId 病害实体id
      * @return 包含病害详情列表的接口响应
      */

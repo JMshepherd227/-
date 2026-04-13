@@ -36,6 +36,7 @@ public class TempEntityService {
     private final InspectionImageMapper imageMapper;
 
     private final AiService aiService;
+    private final tileService tileService;
 
     @Value("${drone.root-dir}")
     private String rootDir;
@@ -52,12 +53,15 @@ public class TempEntityService {
         newEntity.setLat(tempDto.getLat());
         newEntity.setStatus("ACTIVE");
         newEntity.setCreateTime(LocalDateTime.now());
-        entityMapper.insert(newEntity); // 此时自动生成了真实 ID
+        entityMapper.insert(newEntity);
 
-        // 2. 批量更新详情表，将这段任务期间的记录全挂在这个真实 ID 下
+        // 2. 批量更新详情表
         detailMapper.update(null, new LambdaUpdateWrapper<DefectDetail>()
                 .eq(DefectDetail::getTempEntityId, tempId)
                 .set(DefectDetail::getEntityId, newEntity.getId()));
+
+        // 3. 清除该坐标所在瓦片的缓存
+        tileService.evictTileCache(tempDto.getLng(), tempDto.getLat());
 
         log.info("【GNN创建新实体】真实ID: {}, 临时ID: {}", newEntity.getId(), tempId);
     }
@@ -67,10 +71,18 @@ public class TempEntityService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void updateOldDisease(Long oldEntityId, String tempId) {
-        // 批量更新详情表，认祖归宗
+        // 1. 查出旧实体坐标，用于清缓存
+        DefectEntity oldEntity = entityMapper.selectById(oldEntityId);
+
+        // 2. 批量更新详情表
         detailMapper.update(null, new LambdaUpdateWrapper<DefectDetail>()
                 .eq(DefectDetail::getTempEntityId, tempId)
                 .set(DefectDetail::getEntityId, oldEntityId));
+
+        // 3. 清除该坐标所在瓦片的缓存
+        if (oldEntity != null) {
+            tileService.evictTileCache(oldEntity.getLng(), oldEntity.getLat());
+        }
 
         log.info("【GNN匹配老实体】真实ID: {} <- 临时ID: {}", oldEntityId, tempId);
     }

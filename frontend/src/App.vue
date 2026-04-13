@@ -252,17 +252,17 @@ onMounted(async () => {
           const E = new AMapRef.LngLat(end[0], end[1])
           const W = waypoints.map(p => new AMapRef.LngLat(p[0], p[1]))
           drivingLive.clear()
-            if (W.length) {
-              drivingLive.search(S, E, { waypoints: W }, (status, result) => {
-                if (status === 'complete') mapError.value = ''
-                else mapError.value = String(result?.info || result?.message || '路线规划失败')
-              })
-            } else {
-              drivingLive.search(S, E, (status, result) => {
-                if (status === 'complete') mapError.value = ''
-                else mapError.value = String(result?.info || result?.message || '路线规划失败')
-              })
-            }
+          if (W.length) {
+            drivingLive.search(S, E, { waypoints: W }, (status, result) => {
+              if (status === 'complete') mapError.value = ''
+              else mapError.value = String(result?.info || result?.message || '路线规划失败')
+            })
+          } else {
+            drivingLive.search(S, E, (status, result) => {
+              if (status === 'complete') mapError.value = ''
+              else mapError.value = String(result?.info || result?.message || '路线规划失败')
+            })
+          }
         } catch {}
       }
     })
@@ -355,9 +355,9 @@ function clearMarkers() {
 }
 
 function pointOf(img) {
-  const lng = img.matchedLng ?? img.rawLng
-  const lat = img.matchedLat ?? img.rawLat
-  if (lng === null || lng === undefined || lat === null || lat === undefined) return null
+  const lng = img.lng
+  const lat = img.lat
+  if (lng == null || lat == null) return null
   const Lng = Number(lng)
   const Lat = Number(lat)
   if (Number.isNaN(Lng) || Number.isNaN(Lat)) return null
@@ -376,11 +376,6 @@ function updateMarkers(list) {
     })
     m.on('click', () => {
       openDetail(img)
-    })
-    m.setLabel({
-      direction: 'top',
-      offset: new AMapRef.Pixel(0, -8),
-      content: `<div style="background:${img.isDefect ? '#ef4444' : '#2563eb'};color:#fff;padding:2px 6px;border-radius:999px;border:1px solid rgba(255,255,255,0.2);font-size:12px;">${img.defectCount ?? 0}</div>`
     })
     markers.push(m)
   }
@@ -454,7 +449,7 @@ async function loadViewport() {
     const merged = results.flat()
     const uniq = new Map()
     for (const it of merged) {
-      if (it && it.id != null) uniq.set(String(it.id), it)
+      if (it && it.id != null) uniq.set(String(it.id), it)  // DefectEntity.id
     }
     const list = Array.from(uniq.values())
     defects.value = list
@@ -529,25 +524,14 @@ function closeDetail() {
             <IngestConsole v-else-if="active==='ingest'" class="ingest-root" />
             <template v-else>
               <div class="kv">
-                <div class="k">图片ID</div><div class="v">{{ selected.id }}</div>
-                <div class="k">任务ID</div><div class="v">{{ selected.taskId }}</div>
-                <div class="k">无人机ID</div><div class="v">{{ selected.droneId }}</div>
-                <div class="k">病害数</div><div class="v">{{ selected.defectCount ?? 0 }}</div>
+                <div class="k">实体ID</div><div class="v">{{ selected.id }}</div>
+                <div class="k">病害类型</div><div class="v">{{ selected.defectType ?? '-' }}</div>
                 <div class="k">状态</div><div class="v">{{ selected.status ?? '-' }}</div>
                 <div class="k">坐标</div>
-                <div class="v">{{ (selected.matchedLng ?? selected.rawLng) ?? '-' }}, {{ (selected.matchedLat ?? selected.rawLat) ?? '-' }}</div>
+                <div class="v">{{ selected.lng ?? '-' }}, {{ selected.lat ?? '-' }}</div>
+                <div class="k">创建时间</div><div class="v">{{ selected.createTime ?? '-' }}</div>
               </div>
 
-              <div class="imgs">
-                <a v-if="selected.originalImageUrl" class="img-link" :href="joinUrl(API_BASE, selected.originalImageUrl)" target="_blank" rel="noreferrer">
-                  <div class="img-title">原图</div>
-                  <img :src="joinUrl(API_BASE, selected.originalImageUrl)" alt="origin" />
-                </a>
-                <a v-if="selected.resultImageUrl" class="img-link" :href="joinUrl(API_BASE, selected.resultImageUrl)" target="_blank" rel="noreferrer">
-                  <div class="img-title">结果图</div>
-                  <img :src="joinUrl(API_BASE, selected.resultImageUrl)" alt="result" />
-                </a>
-              </div>
 
               <div class="detail">
                 <div class="detail-title">识别列表</div>
@@ -556,14 +540,19 @@ function closeDetail() {
                 <div v-else-if="selectedDetails.length===0" class="muted">暂无详情</div>
                 <table v-else class="table">
                   <thead>
-                    <tr><th>类型</th><th>置信度</th><th>时间</th></tr>
+                  <tr><th>类型</th><th>置信度</th><th>地址</th><th>时间</th><th>图片</th></tr>
                   </thead>
                   <tbody>
-                    <tr v-for="d in selectedDetails" :key="d.id">
-                      <td>{{ d.defectType }}</td>
-                      <td>{{ d.confidence }}</td>
-                      <td>{{ d.createTime ?? '-' }}</td>
-                    </tr>
+                  <tr v-for="d in selectedDetails" :key="d.id">
+                    <td>{{ d.defectType }}</td>
+                    <td>{{ d.confidence }}</td>
+                    <td>{{ d.address || d.roadName || '-' }}</td>
+                    <td>{{ d.createTime ?? '-' }}</td>
+                    <td>
+                      <a v-if="d.resultImageUrl" :href="joinUrl(API_BASE, d.resultImageUrl)" target="_blank" rel="noreferrer" style="color:#60a5fa;font-size:12px;">结果图</a>
+                      <a v-if="d.originalImageUrl" :href="joinUrl(API_BASE, d.originalImageUrl)" target="_blank" rel="noreferrer" style="color:#9ca3af;font-size:12px;margin-left:6px;">原图</a>
+                    </td>
+                  </tr>
                   </tbody>
                 </table>
               </div>

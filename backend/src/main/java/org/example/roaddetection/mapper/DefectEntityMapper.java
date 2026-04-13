@@ -10,9 +10,9 @@ import java.util.List;
 
 @Mapper
 public interface DefectEntityMapper extends BaseMapper<DefectEntity> {
-    @Select("SELECT * FROM inspection_image " +
-            "WHERE raw_lat BETWEEN #{minLat}*1.5-#{maxLat} AND #{maxLat}*1.5-#{minLat} " +
-            "AND raw_lng BETWEEN #{minLng}*1.5-#{maxLng} AND #{maxLng}*1.5-#{minLng}")
+    @Select("SELECT * FROM defect_entity " +
+            "WHERE lat BETWEEN #{minLat} AND #{maxLat} " +
+            "AND lng BETWEEN #{minLng} AND #{maxLng}")
     List<DefectEntity> selectEntitiesInViewport(
             @Param("minLat") Double minLat,
             @Param("maxLat") Double maxLat,

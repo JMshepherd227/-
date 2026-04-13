@@ -15,7 +15,7 @@ IMAGE_INTERVAL = 2.0      # 拍照上传间隔 (2秒)
 FLIGHT_SPEED = 5.0        # 飞行速度 (5 m/s)
 
 # 无人机缺省物理参数 (用于视觉投影反算)
-DEFAULT_ALTITUDE = 30.0   # 飞行高度 50米
+DEFAULT_ALTITUDE = 4.0   # 飞行高度 50米
 DEFAULT_PITCH = -90.0     # 云台俯仰角 (-90度代表垂直朝下)
 DEFAULT_ROLL = 0.0        # 云台横滚角
 DEFAULT_FOV = 80.0        # 相机视场角 90度
