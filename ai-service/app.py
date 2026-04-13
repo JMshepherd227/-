@@ -16,6 +16,9 @@ import datetime
 import uuid
 import numpy as np
 
+import kornia as K
+import kornia.feature as KF
+
 from model import DiseasePointMatcher
 import config
 
@@ -48,6 +51,19 @@ except Exception as e:
     print(f"Warning: Failed to load GNN Point Matcher. Please check the path '{MATCHER_PATH}'. Error: {e}")
     point_matcher = None
 
+# 延迟加载 LoFTR 模型（首次调用接口时自动下载权重）
+_loftr_matcher = None
+
+def get_loftr_matcher():
+    """懒加载 LoFTR 模型，避免启动时占用过多显存"""
+    global _loftr_matcher
+    if _loftr_matcher is None:
+        print("Loading LoFTR model (outdoor weights)...")
+        _loftr_matcher = KF.LoFTR(pretrained='outdoor').to(device)
+        _loftr_matcher.eval()
+        print("LoFTR model loaded successfully!")
+    return _loftr_matcher
+
 preprocess = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
@@ -72,7 +88,7 @@ class PredictResponse(BaseModel):
     image_width: int
     image_height: int
 
-# --- SIFT 接口结构 ---
+# --- SIFT / LoFTR 接口共用结构 ---
 class HomographyResponse(BaseModel):
     status: str
     message: str
@@ -173,6 +189,28 @@ def sinkhorn(logits, iters=3):
         P[:, :-1] = P[:, :-1] / (col_sums + 1e-8)
     return P
 
+
+def _decode_to_loftr_tensor(contents: bytes) -> torch.Tensor:
+    """
+    将上传的图片字节流解码并转为 LoFTR 所需格式：
+    灰度图 Tensor，shape (1, 1, H, W)，值域 [0, 1]，分辨率统一为 480x640。
+    """
+    nparr = np.frombuffer(contents, np.uint8)
+    img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise ValueError("图像解码失败，请确认文件格式正确")
+
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    # 转为 Tensor (B, C, H, W)
+    img_tensor = K.image_to_tensor(img_rgb, keepdim=False).float() / 255.0
+    img_tensor = img_tensor.to(device)
+    # 统一缩放至 640x480（W x H）
+    img_tensor = K.geometry.resize(img_tensor, (480, 640))
+    # 转为灰度 (1, 1, H, W)
+    img_gray = K.color.rgb_to_grayscale(img_tensor)
+    return img_gray
+
+
 # ======================== 4. 路由接口定义 ========================
 
 @app.post("/get_homography/", response_model=HomographyResponse)
@@ -218,6 +256,96 @@ async def get_homography(file1: UploadFile = File(...), file2: UploadFile = File
             return HomographyResponse(status="failed", message="矩阵计算失败", inliers=0, processing_time_ms=cost_ms)
     except Exception as e:
         return HomographyResponse(status="error", message=str(e), inliers=0, processing_time_ms=0)
+
+
+@app.post("/get_homography_loftr/", response_model=HomographyResponse)
+async def get_homography_loftr(file1: UploadFile = File(...), file2: UploadFile = File(...)):
+    """
+    基于 LoFTR 的图像匹配接口。
+
+    与 /get_homography/ 参数及返回结构完全一致，算法替换为
+    Transformer 特征匹配 + USAC_MAGSAC 几何校验，适合无显著角点、
+    纹理重复或光照变化较大的路面图像场景。
+
+    Args:
+        file1: 参考帧图片（第一次巡检）
+        file2: 待匹配图片（第二次巡检）
+
+    Returns:
+        HomographyResponse:
+            - status:             "success" | "failed" | "error"
+            - message:            人类可读状态说明
+            - inliers:            MAGSAC 几何校验后的内点数
+            - processing_time_ms: 端到端耗时（毫秒）
+            - homography_matrix:  3x3 单应矩阵（列表形式），失败时为 null
+    """
+    start_time = time.time()
+    try:
+        contents1 = await file1.read()
+        contents2 = await file2.read()
+
+        # ---------- 图像预处理 ----------
+        try:
+            img1_gray = _decode_to_loftr_tensor(contents1)
+            img2_gray = _decode_to_loftr_tensor(contents2)
+        except ValueError as ve:
+            return HomographyResponse(
+                status="error", message=str(ve),
+                inliers=0, processing_time_ms=0
+            )
+
+        # ---------- LoFTR 特征匹配 ----------
+        matcher = get_loftr_matcher()
+        input_dict = {"image0": img1_gray, "image1": img2_gray}
+        with torch.inference_mode():
+            correspondences = matcher(input_dict)
+
+        mkpts1 = correspondences['keypoints0'].cpu().numpy()  # (N, 2)
+        mkpts2 = correspondences['keypoints1'].cpu().numpy()  # (N, 2)
+
+        total_matches = len(mkpts1)
+        if total_matches < 10:
+            cost_ms = round((time.time() - start_time) * 1000, 2)
+            return HomographyResponse(
+                status="failed",
+                message=f"有效匹配点过少（仅 {total_matches} 个），请检查图像质量",
+                inliers=0,
+                processing_time_ms=cost_ms
+            )
+
+        # ---------- USAC_MAGSAC 几何校验 ----------
+        H_mat, mask = cv2.findHomography(mkpts1, mkpts2, cv2.USAC_MAGSAC, 3.0)
+        cost_ms = round((time.time() - start_time) * 1000, 2)
+
+        if H_mat is None:
+            return HomographyResponse(
+                status="failed",
+                message="单应矩阵计算失败，匹配点可能退化",
+                inliers=0,
+                processing_time_ms=cost_ms
+            )
+
+        inlier_count = int(mask.ravel().sum()) if mask is not None else total_matches
+        print(f"[LoFTR] 初始匹配: {total_matches}  几何过滤后内点: {inlier_count}  耗时: {cost_ms}ms")
+
+        return HomographyResponse(
+            status="success",
+            message="匹配成功",
+            inliers=inlier_count,
+            processing_time_ms=cost_ms,
+            homography_matrix=H_mat.tolist()
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        cost_ms = round((time.time() - start_time) * 1000, 2)
+        return HomographyResponse(
+            status="error",
+            message=str(e),
+            inliers=0,
+            processing_time_ms=cost_ms
+        )
 
 
 @app.post("/predict/")
@@ -335,8 +463,8 @@ async def match_points(req: MatchRequest):
                 is_new = (idx == n_p)
 
                 #if not is_new and conf < 0.45:
-                    #is_new = True
-                    #old_id = None
+                #is_new = True
+                #old_id = None
 
                 old_id = None if is_new else P_ids[idx]
 

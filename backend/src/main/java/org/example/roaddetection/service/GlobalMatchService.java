@@ -91,7 +91,7 @@ public class GlobalMatchService {
 
                     else if (conf >= 0.30) {
                         log.info("GNN 犹豫中 (Conf: {})，启动 SIFT 视觉验证 {} -> {}", conf, newId, oldIdStr);
-                        boolean isVisualMatch = tempEntityService.checkWithSift(oldEntityId, newId);
+                        boolean isVisualMatch = tempEntityService.checkWithLoFTR(oldEntityId, newId);
 
                         if (isVisualMatch) {
                             tempEntityService.updateOldDisease(oldEntityId, newId);

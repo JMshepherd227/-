@@ -36,6 +36,9 @@ public class AiService {
     @Value("${drone.GNN-url:http://localhost:8000/match_points/}")
     private String matchPointUrl;
 
+    @Value("${drone.LoFTR-url:http://localhost:8000/get_homography_loftr/}")
+    private String loFTRUrl;
+
     @Value("${drone.ai-timeout-ms:10000}")
     private int aiTimeoutMs;
 
@@ -62,7 +65,18 @@ public class AiService {
      * 调用 Python 特征匹配服务
      */
     public AiMatchResponseDTO match(File fileA, File fileB) {
-        HttpResponse response = HttpRequest.post(matchUrl)
+        return getAiMatchResponseDTO(fileA, fileB, matchUrl);
+    }
+
+    /**
+     * 调用 Python LoFTR 特征匹配服务
+     */
+    public AiMatchResponseDTO LoFTRMatch(File fileA, File fileB) {
+        return getAiMatchResponseDTO(fileA, fileB, loFTRUrl);
+    }
+
+    private AiMatchResponseDTO getAiMatchResponseDTO(File fileA, File fileB, String loFTRUrl) {
+        HttpResponse response = HttpRequest.post(loFTRUrl)
                 .form("file1", fileA)
                 .form("file2", fileB)
                 .timeout(aiTimeoutMs)

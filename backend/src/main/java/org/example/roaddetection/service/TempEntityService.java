@@ -88,9 +88,9 @@ public class TempEntityService {
     }
 
     /**
-     * SIFT 兜底验证逻辑：提取各自的图片和 BBox 进行几何矩阵投影
+     * LoFTR 兜底验证逻辑：提取各自的图片和 BBox 进行几何矩阵投影
      */
-    public boolean checkWithSift(Long oldEntityId, String tempNewId) {
+    public boolean checkWithLoFTR(Long oldEntityId, String tempNewId) {
         try {
             // 1. 拿当前病害的最新一条 Detail 记录
             DefectDetail newDetail = detailMapper.selectOne(
@@ -117,7 +117,7 @@ public class TempEntityService {
             if (!newFile.exists() || !oldFile.exists()) return false;
 
             // 4. 调用 Python 算矩阵
-            AiMatchResponseDTO matchResult = aiService.match(newFile, oldFile);
+            AiMatchResponseDTO matchResult = aiService.LoFTRMatch(newFile, oldFile);
             if (matchResult == null || matchResult.getHomographyMatrix() == null) {
                 return false;
             }
