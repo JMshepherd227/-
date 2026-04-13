@@ -86,6 +86,9 @@ def execute_mission(task):
     image_index = 0
     # ============================================
 
+    # 每次任务开始都从第一张图片重新开始
+    image_index = 0
+
     route_data = task.get('routePoints')
 
     if isinstance(route_data, str):
@@ -230,3 +233,4 @@ if __name__ == "__main__":
 
     DRONE_ID = args.drone_id
     main_loop()
+
