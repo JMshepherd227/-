@@ -15,8 +15,8 @@ def matching_loss(pred_scores, labels, Q_mask=None):
     # 2. 只计算有效点
     loss_matrix = -(labels * log_probs)
 
-    # 3. 拦截异常大的单点 Loss (阈值设为 15.0)
-    loss_matrix = torch.clamp(loss_matrix, max=15.0)
+    # 3. 拦截异常大的单点 Loss
+    loss_matrix = torch.clamp(loss_matrix, max=25.0)
 
     loss_per_point = loss_matrix.sum(dim=-1)
 

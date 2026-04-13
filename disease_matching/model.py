@@ -6,10 +6,18 @@ class PointEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         dim = config.FEATURE_DIM
-        # 进一步降低位置编码的敏感度，改用更平稳的投影
-        self.coord_proj = nn.Linear(2, dim)
-        self.type_embedding = nn.Embedding(config.N_CLASSES, dim)
+        self.num_pos_feats = dim // 4
 
+        # 频率上限从 8 降到 4，梯度会平稳很多
+        self.register_buffer('freq_bands', 2.0 ** torch.linspace(0, 4, self.num_pos_feats))
+
+        self.pos_mlp = nn.Sequential(
+            nn.Linear(self.num_pos_feats * 4, dim),
+            nn.LayerNorm(dim),
+            nn.ReLU(),
+            nn.Linear(dim, dim)
+        )
+        self.type_embedding = nn.Embedding(config.N_CLASSES, dim)
         self.mlp = nn.Sequential(
             nn.Linear(dim, dim),
             nn.LayerNorm(dim),
@@ -19,12 +27,17 @@ class PointEncoder(nn.Module):
 
     def forward(self, x_with_type):
         coords = x_with_type[:, :, :2]
+
+        # 应用温和的高频编码
+        pts_freq = coords.unsqueeze(-1) * self.freq_bands.view(1, 1, 1, -1) * math.pi
+        pos_enc = torch.cat([torch.sin(pts_freq), torch.cos(pts_freq)], dim=-1)
+        pos_enc = pos_enc.reshape(coords.shape[0], coords.shape[1], -1)
+
+        coord_feat = self.pos_mlp(pos_enc)
         types = x_with_type[:, :, 2].long()
         types = torch.clamp(types, 0, self.type_embedding.num_embeddings - 1)
 
-        # 暂时放弃复杂的 Sinusoidal PE，改用 Linear+LayerNorm
-        # 这是最稳定的特征提取方式，先保证模型能跑通
-        feat = self.coord_proj(coords) + self.type_embedding(types)
+        feat = coord_feat + self.type_embedding(types)
         return self.mlp(feat)
 
 
@@ -76,6 +89,7 @@ class DiseasePointMatcher(nn.Module):
         self.dustbin = nn.Parameter(torch.zeros(dim))
         # 锁定温度，绝对不让它参与训练
         self.register_buffer('temperature', torch.tensor(1.0))
+        self.temperature = nn.Parameter(torch.tensor(1.0))
 
     def forward(self, P, Q, P_mask=None, Q_mask=None):
         P_feat = self.encoder(P)
@@ -85,14 +99,16 @@ class DiseasePointMatcher(nn.Module):
         # 相似度缩放
         scores = torch.einsum('bqd,bpd->bqp', Q_feat, P_feat) / (P_feat.shape[-1] ** 0.5)
 
+        temp = torch.clamp(self.temperature, min=0.1, max=1.5)
+        scores = scores / temp
+
         if P_mask is not None:
-            # 修复：不要用 -1e9 或 -1e4，用一个足以让 Softmax 归零但不会让导数爆炸的值
-            scores = scores.masked_fill(~P_mask.unsqueeze(1), -20.0)
+            scores = scores.masked_fill(~P_mask.unsqueeze(1), -100.0)
 
         dustbin_scores = torch.einsum('bqd,d->bq', Q_feat, self.dustbin).unsqueeze(-1)
-        dustbin_scores = dustbin_scores / (P_feat.shape[-1] ** 0.5)
+        dustbin_scores = (dustbin_scores / (P_feat.shape[-1] ** 0.5)) / temp
 
         full_scores = torch.cat([scores, dustbin_scores], dim=-1)
 
-        # 核心修复：强制截断，保命
-        return torch.clamp(full_scores, min=-20, max=20)
+        # 将截断范围从 20 放大到 50，允许模型表达更强的置信度
+        return torch.clamp(full_scores, min=-50, max=50)

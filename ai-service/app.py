@@ -155,38 +155,49 @@ def extract_feature(cv2_img: np.ndarray, bbox: List[float]) -> dict:
     lbp = extract_lbp_feature(crop)
     return {"deep": deep, "hu": hu, "lbp": lbp}
 
-def normalize_coords(P_coords, Q_coords):
+def latlon_to_meters(lat, lon, center_lat, center_lon):
+    """将经纬度转换为以 center 为原点的局部平面坐标（单位：米）"""
+    R = 6378137.0
+    d_lat = math.radians(lat - center_lat)
+    d_lon = math.radians(lon - center_lon)
+    y = d_lat * R
+    x = d_lon * R * math.cos(math.radians(center_lat))
+    return x, y
+
+def normalize_coords_fixed(P_coords, Q_coords):
+    """
+    【同步训练逻辑】：使用 500.0 的固定尺标进行归一化。
+    这保证了模型眼中 0.02 的距离永远等于地球上的 10 米。
+    """
     if len(P_coords) == 0 and len(Q_coords) == 0:
         return P_coords, Q_coords
 
-    all_pts = np.vstack([P_coords, Q_coords])
+    # 合并所有点找到质心
+    all_pts = np.vstack([P_coords, Q_coords]) if len(P_coords)>0 and len(Q_coords)>0 else (P_coords if len(P_coords)>0 else Q_coords)
     center = (all_pts.min(axis=0) + all_pts.max(axis=0)) / 2.0
 
+    # 严格使用训练时的固定比例尺 500.0
     fixed_scale = 500.0
 
     P_norm = (P_coords - center) / fixed_scale if len(P_coords) > 0 else P_coords
     Q_norm = (Q_coords - center) / fixed_scale if len(Q_coords) > 0 else Q_coords
     return P_norm, Q_norm
 
-def latlon_to_meters(lat, lon, center_lat, center_lon):
-    """将经纬度近似转换为以 center 为原点的局部平面坐标（单位：米）"""
-    R = 6378137.0  # 地球半径（米）
-    d_lat = math.radians(lat - center_lat)
-    d_lon = math.radians(lon - center_lon)
-
-    y = d_lat * R
-    x = d_lon * R * math.cos(math.radians(center_lat))
-    return x, y
-
-def sinkhorn(logits, iters=3):
-    """Sinkhorn 迭代逼近最优传输"""
+def sinkhorn(logits, iterations=3):
+    """
+    Sinkhorn 算法：通过迭代归一化实现全局最优分配（一对一约束）。
+    """
+    # 转换为概率空间
     P = torch.exp(logits)
-    for _ in range(iters):
-        # 行归一化（Q 的概率和为 1）
+
+    for _ in range(iterations):
+        # 行归一化 (每个 Q 选 P 的概率之和为 1)
         P = P / (P.sum(dim=1, keepdim=True) + 1e-8)
-        # 列归一化（除 Dustbin 外，P 的被选概率和为 1）
-        col_sums = P[:, :-1].sum(dim=0, keepdim=True)
-        P[:, :-1] = P[:, :-1] / (col_sums + 1e-8)
+
+        # 列归一化 (每个 P 被选的概率之和为 1，不约束最后一列垃圾桶)
+        col_sum = P[:, :-1].sum(dim=0, keepdim=True)
+        P[:, :-1] = P[:, :-1] / (col_sum + 1e-8)
+
     return P
 
 
@@ -398,62 +409,53 @@ async def match_points(req: MatchRequest):
             return MatchResponse(status="success", message="No new points to match.", results=[])
 
         if len(req.old_points) == 0:
-            results = []
-            for q in req.new_points:
-                cand = Candidate(rank=1, matched_old_id=None, confidence=1.0, is_new_disease=True)
-                results.append(MatchResultItem(new_id=q.id, candidates=[cand]))
-            return MatchResponse(status="success", message="All considered new (no old points).", results=results)
+            results = [MatchResultItem(new_id=q.id, candidates=[Candidate(rank=1, matched_old_id=None, confidence=1.0, is_new_disease=True)]) for q in req.new_points]
+            return MatchResponse(status="success", message="All new (no history).", results=results)
 
-        # 2. 安全拦截：防止 type 越界导致 CUDA 崩溃
+        # 2. 安全拦截：防止 type 越界（配合模型层的 clamp 使用）
         max_class_idx = matcher_config.N_CLASSES - 1
-        for p in req.old_points:
-            if p.type > max_class_idx or p.type < 0: p.type = 0
-        for q in req.new_points:
-            if q.type > max_class_idx or q.type < 0: q.type = 0
+        for p in req.old_points: p.type = max(0, min(p.type, max_class_idx))
+        for q in req.new_points: q.type = max(0, min(q.type, max_class_idx))
 
-        # 3. 获取基准坐标原点（经纬度），用于后续转换米级平面
-        ref_lon, ref_lat = req.old_points[0].x, req.old_points[0].y
+        # 3. 统一坐标基准（锚定原点）
+        # 使用新旧点集整体的第一个点作为经纬度转平面的参考原点
+        ref_lon = req.old_points[0].x
+        ref_lat = req.old_points[0].y
 
         P_ids = [p.id for p in req.old_points]
         Q_ids = [q.id for q in req.new_points]
 
-        # 4. 提取数据并将经纬度(x,y)转为局部米(meters)
-        P_coords = []
-        for p in req.old_points:
-            x_m, y_m = latlon_to_meters(p.y, p.x, ref_lat, ref_lon) # lat=y, lon=x
-            P_coords.append([x_m, y_m])
+        # 4. 经纬度转米级平面坐标
+        P_m = np.array([latlon_to_meters(p.y, p.x, ref_lat, ref_lon) for p in req.old_points], dtype=np.float32)
+        Q_m = np.array([latlon_to_meters(q.y, q.x, ref_lat, ref_lon) for q in req.new_points], dtype=np.float32)
 
-        Q_coords = []
-        for q in req.new_points:
-            x_m, y_m = latlon_to_meters(q.y, q.x, ref_lat, ref_lon)
-            Q_coords.append([x_m, y_m])
+        # 5. 【同步训练逻辑】：固定 500m 尺度归一化
+        P_norm_c, Q_norm_c = normalize_coords_fixed(P_m, Q_m)
 
-        P_coords = np.array(P_coords, dtype=np.float32)
-        Q_coords = np.array(Q_coords, dtype=np.float32)
-
+        # 拼接类型特征 [x, y, type]
         P_types = np.array([[p.type] for p in req.old_points], dtype=np.float32)
         Q_types = np.array([[q.type] for q in req.new_points], dtype=np.float32)
-
-        # 5. 归一化并拼接特征 [x_norm, y_norm, type_idx]
-        P_norm_c, Q_norm_c = normalize_coords(P_coords, Q_coords)
         P_final = np.hstack([P_norm_c, P_types])
         Q_final = np.hstack([Q_norm_c, Q_types])
 
-        # 6. 转 Tensor 并推入模型
+        # 6. 推理与 Sinkhorn 优化
         P_t = torch.tensor(P_final).unsqueeze(0).to(device)
         Q_t = torch.tensor(Q_final).unsqueeze(0).to(device)
 
         with torch.no_grad():
-            logits = point_matcher(P_t, Q_t).squeeze(0)  # (Nq, Np+1)
-            #probs = torch.softmax(logits, dim=-1).cpu().numpy()
-            probs = sinkhorn(logits).cpu().numpy()
+            # 这里的 logits 内部已经包含了温度系数和 clamp 处理
+            logits = point_matcher(P_t, Q_t).squeeze(0)
 
-        # 7. 生成 Top-K 候补名单
+            # 使用 Sinkhorn 代替 Softmax，解决“抢亲”问题
+            probs = sinkhorn(logits, iterations=3).cpu().numpy()
+
+        # 7. 生成结果
         results = []
         n_p = len(P_ids)
-        TOP_K = min(3, n_p + 1)  # 返回前 3 个最可能的匹配
+        TOP_K = min(3, n_p + 1)
 
         for qi, q_id in enumerate(Q_ids):
+            # 按概率降序排列
             sorted_indices = np.argsort(probs[qi])[::-1]
             top_k_indices = sorted_indices[:TOP_K]
 
@@ -462,23 +464,18 @@ async def match_points(req: MatchRequest):
                 conf = float(probs[qi, idx])
                 is_new = (idx == n_p)
 
-                #if not is_new and conf < 0.45:
-                #is_new = True
-                #old_id = None
-
-                old_id = None if is_new else P_ids[idx]
+                # 【策略干预】：如果最高置信度都低于 0.3，我们更倾向于认为它是新增
+                # 这一行可以根据你训练后的表现决定是否开启
+                # if rank == 0 and not is_new and conf < 0.3: is_new = True
 
                 candidates.append(Candidate(
                     rank=rank + 1,
-                    matched_old_id=old_id,
+                    matched_old_id=None if is_new else P_ids[idx],
                     confidence=conf,
                     is_new_disease=is_new
                 ))
 
-            results.append(MatchResultItem(
-                new_id=q_id,
-                candidates=candidates
-            ))
+            results.append(MatchResultItem(new_id=q_id, candidates=candidates))
 
         return MatchResponse(status="success", message="Match completed.", results=results)
 
