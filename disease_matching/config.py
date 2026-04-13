@@ -9,7 +9,7 @@ class Config:
     NEW_DISEASE_LAMBDA = 10     # 新增病害点泊松参数
 
     # 点集参数
-    N_POINTS_RANGE = (2, 100) # 每个样本的点数范围
+    N_POINTS_RANGE = (2, 150) # 每个样本的点数范围
     K_NEIGHBORS = 8            # 局部特征的邻居数
 
     # 模型参数
@@ -21,5 +21,5 @@ class Config:
     BATCH_SIZE = 32
     EPOCHS = 50
     LR = 1e-4
-    TRAIN_SAMPLES = 30000
+    TRAIN_SAMPLES = 50000
     VAL_SAMPLES = 1000

@@ -1,23 +1,29 @@
 import torch
 import torch.nn.functional as F
 
-def matching_loss(pred_scores, labels, Q_mask=None, dustbin_weight=1.0):
+def matching_loss(pred_scores, labels, Q_mask=None):
     """
-    dustbin_weight: 调整对“无匹配/新增点”的重视程度
+    pred_scores: (B, Nq, Np+1)
+    labels:      (B, Nq, Np+1)
+    Q_mask:      (B, Nq)
     """
+    # 1. 强制数值修正：如果在 pred_scores 里是 -20 (被屏蔽位)，
+    # 但 labels 却要在那里算 Loss，这会产生极大梯度。
+    # 我们在这里做一个安全截断
     log_probs = F.log_softmax(pred_scores, dim=-1)
 
-    # 构建权重矩阵：普通匹配列权重为 1.0，最后一列(dustbin)权重放大
-    # labels 形状: (B, Nq, Np+1)
-    weights = torch.ones_like(labels)
-    weights[:, :, -1] = dustbin_weight  # 把最后一列的权重调大
+    # 2. 只计算有效点
+    loss_matrix = -(labels * log_probs)
 
-    # 计算加权的交叉熵
-    weighted_labels = labels * weights
-    point_loss = -(weighted_labels * log_probs).sum(dim=-1)
+    # 3. 拦截异常大的单点 Loss (阈值设为 15.0)
+    loss_matrix = torch.clamp(loss_matrix, max=15.0)
+
+    loss_per_point = loss_matrix.sum(dim=-1)
 
     if Q_mask is not None:
-        loss = point_loss[Q_mask].mean()
-    else:
-        loss = point_loss.mean()
-    return loss
+        num_valid = Q_mask.sum()
+        if num_valid > 0:
+            return loss_per_point[Q_mask].sum() / num_valid
+        else:
+            return pred_scores.sum() * 0.0
+    return loss_per_point.mean()

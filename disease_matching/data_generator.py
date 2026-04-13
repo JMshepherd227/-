@@ -23,10 +23,10 @@ def generate_pair(config):
     is_extreme = np.random.rand() < 0.2
 
     if is_extreme:
-        det_rate_p = np.random.uniform(0.3, 0.6)
+        det_rate_p = np.random.uniform(0.3, 0.6)  # 旧点大量漏检
         det_rate_q = np.random.uniform(0.7, 0.9)
-        # 极端情况下新增点数翻倍
-        base_lambda = config.NEW_DISEASE_LAMBDA * 2.0
+        # 新增点数是旧点的 2 倍甚至更多，逼迫模型学会拒绝
+        base_lambda = config.NEW_DISEASE_LAMBDA * np.random.uniform(2.0, 5.0)
     else:
         det_rate_p = np.random.uniform(*config.DETECTION_RATE)
         det_rate_q = np.random.uniform(*config.DETECTION_RATE)
@@ -94,12 +94,22 @@ def normalize(P, Q):
     if len(P) == 0 and len(Q) == 0:
         return P, Q, np.zeros(2), 1.0
 
-    all_pts = np.vstack([P, Q])
+    # 1. 安全堆叠
+    all_pts = np.vstack([P, Q]) if len(P) > 0 and len(Q) > 0 else (P if len(P) > 0 else Q)
+
+    # 2. 计算质心
     center = (all_pts.min(axis=0) + all_pts.max(axis=0)) / 2.0
 
-    fixed_scale = 500.0
+    # 3. 动态保底尺度
+    # 依然保留你的 500.0 思想，但要防止实际点集跨度远超 1000m 导致坐标过大
+    actual_span = np.max(all_pts.max(axis=0) - all_pts.min(axis=0)) / 2.0
 
-    return (P - center) / fixed_scale, (Q - center) / fixed_scale, center, fixed_scale
+    scale = max(actual_span, 500.0)
+
+    P_norm = (P - center) / scale if len(P) > 0 else P
+    Q_norm = (Q - center) / scale if len(Q) > 0 else Q
+
+    return P_norm, Q_norm, center, scale
 
 
 def apply_error(points, config, seed):
