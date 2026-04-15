@@ -8,8 +8,7 @@ class PointEncoder(nn.Module):
         dim = config.FEATURE_DIM
         self.num_pos_feats = dim // 4
 
-        # 频率上限从 8 降到 4，梯度会平稳很多
-        self.register_buffer('freq_bands', 2.0 ** torch.linspace(0, 4, self.num_pos_feats))
+        self.register_buffer('freq_bands', 2.0 ** torch.linspace(0, 6, self.num_pos_feats))
 
         self.pos_mlp = nn.Sequential(
             nn.Linear(self.num_pos_feats * 4, dim),

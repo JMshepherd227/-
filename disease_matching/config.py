@@ -1,15 +1,15 @@
 class Config:
     N_CLASSES = 4
     # 区域与误差参数（根据你的设备标定）
-    MAP_SIZE_RANGE = (30.0, 3000.0)
+    MAP_SIZE_RANGE = (100.0, 800.0)
     GLOBAL_OFFSET_MAX = 10.0   # 全局偏移最大值（米）
-    LOCAL_NOISE_STD = 2.0      # 局部噪声标准差（米）
+    LOCAL_NOISE_STD = 1.5      # 局部噪声标准差（米）
     ROTATION_MAX = 5.0         # 全局旋转最大角度（度）
     DETECTION_RATE = (0.7, 0.95)# 检测率范围
     NEW_DISEASE_LAMBDA = 10     # 新增病害点泊松参数
 
     # 点集参数
-    N_POINTS_RANGE = (2, 150) # 每个样本的点数范围
+    N_POINTS_RANGE = (10, 140) # 每个样本的点数范围
     K_NEIGHBORS = 8            # 局部特征的邻居数
 
     # 模型参数

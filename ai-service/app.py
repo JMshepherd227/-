@@ -5,6 +5,8 @@ from typing import List, Tuple, Optional
 import torch
 from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
+from torch import cdist
+import torch.nn.functional as F
 from torchvision import transforms
 from torchvision.models import resnet18, ResNet18_Weights
 from ultralytics import YOLO
@@ -39,6 +41,7 @@ reid_model.to(device)
 reid_model.eval()
 
 # 加载 GNN 拓扑匹配模型
+#MATCHER_PATH = "D:/work(work only)/python/UAVRoadDetection/ai-service/model/best_matcher.pt"
 MATCHER_PATH = "D:/work(work only)/python/UAVRoadDetection/ai-service/model/best_matcher.pt"
 try:
     matcher_checkpoint = torch.load(MATCHER_PATH, map_location=device, weights_only=False)
@@ -183,19 +186,22 @@ def normalize_coords_fixed(P_coords, Q_coords):
     Q_norm = (Q_coords - center) / fixed_scale if len(Q_coords) > 0 else Q_coords
     return P_norm, Q_norm
 
-def sinkhorn(logits, iterations=3):
+def sinkhorn(logits, iterations=5):
     """
-    Sinkhorn 算法：通过迭代归一化实现全局最优分配（一对一约束）。
+    带数值保护的 Sinkhorn 算法
     """
-    # 转换为概率空间
+    # 1. 减去每行最大值防止 exp(logits) 溢出 (Log-Sum-Exp 技巧)
+    logits = logits - torch.max(logits, dim=1, keepdim=True)[0]
     P = torch.exp(logits)
 
     for _ in range(iterations):
-        # 行归一化 (每个 Q 选 P 的概率之和为 1)
-        P = P / (P.sum(dim=1, keepdim=True) + 1e-8)
+        # 行归一化
+        row_sum = P.sum(dim=1, keepdim=True)
+        P = P / (row_sum + 1e-8)
 
-        # 列归一化 (每个 P 被选的概率之和为 1，不约束最后一列垃圾桶)
+        # 列归一化 (不约束最后一列垃圾桶)
         col_sum = P[:, :-1].sum(dim=0, keepdim=True)
+        # 修复：防止某些旧点完全没被任何人看中导致除零
         P[:, :-1] = P[:, :-1] / (col_sum + 1e-8)
 
     return P
@@ -404,78 +410,93 @@ async def match_points(req: MatchRequest):
         return MatchResponse(status="error", message="Matcher model is not loaded.", results=[])
 
     try:
-        # 1. 拦截空数据
-        if len(req.new_points) == 0:
-            return MatchResponse(status="success", message="No new points to match.", results=[])
-
+        if len(req.new_points) == 0: return MatchResponse(status="success", message="No new points.", results=[])
         if len(req.old_points) == 0:
-            results = [MatchResultItem(new_id=q.id, candidates=[Candidate(rank=1, matched_old_id=None, confidence=1.0, is_new_disease=True)]) for q in req.new_points]
-            return MatchResponse(status="success", message="All new (no history).", results=results)
+            return MatchResponse(status="success", message="All new.", results=[
+                MatchResultItem(new_id=q.id, candidates=[Candidate(rank=1, matched_old_id=None, confidence=1.0, is_new_disease=True)])
+                for q in req.new_points
+            ])
 
-        # 2. 安全拦截：防止 type 越界（配合模型层的 clamp 使用）
-        max_class_idx = matcher_config.N_CLASSES - 1
-        for p in req.old_points: p.type = max(0, min(p.type, max_class_idx))
-        for q in req.new_points: q.type = max(0, min(q.type, max_class_idx))
-
-        # 3. 统一坐标基准（锚定原点）
-        # 使用新旧点集整体的第一个点作为经纬度转平面的参考原点
-        ref_lon = req.old_points[0].x
-        ref_lat = req.old_points[0].y
-
-        P_ids = [p.id for p in req.old_points]
-        Q_ids = [q.id for q in req.new_points]
-
-        # 4. 经纬度转米级平面坐标
+        # 1. 坐标转换与归一化 (保持不变)
+        ref_lon, ref_lat = req.old_points[0].x, req.old_points[0].y
         P_m = np.array([latlon_to_meters(p.y, p.x, ref_lat, ref_lon) for p in req.old_points], dtype=np.float32)
         Q_m = np.array([latlon_to_meters(q.y, q.x, ref_lat, ref_lon) for q in req.new_points], dtype=np.float32)
-
-        # 5. 【同步训练逻辑】：固定 500m 尺度归一化
         P_norm_c, Q_norm_c = normalize_coords_fixed(P_m, Q_m)
 
-        # 拼接类型特征 [x, y, type]
-        P_types = np.array([[p.type] for p in req.old_points], dtype=np.float32)
-        Q_types = np.array([[q.type] for q in req.new_points], dtype=np.float32)
-        P_final = np.hstack([P_norm_c, P_types])
-        Q_final = np.hstack([Q_norm_c, Q_types])
+        P_final = np.hstack([P_norm_c, np.array([[p.type] for p in req.old_points], dtype=np.float32)])
+        Q_final = np.hstack([Q_norm_c, np.array([[q.type] for q in req.new_points], dtype=np.float32)])
 
-        # 6. 推理与 Sinkhorn 优化
+        # 2. 模型推理
         P_t = torch.tensor(P_final).unsqueeze(0).to(device)
         Q_t = torch.tensor(Q_final).unsqueeze(0).to(device)
 
         with torch.no_grad():
-            # 这里的 logits 内部已经包含了温度系数和 clamp 处理
-            logits = point_matcher(P_t, Q_t).squeeze(0)
+            logits = point_matcher(P_t, Q_t).squeeze(0) # (Nq, Np+1)
+            # 物理距离掩码 (30米)
+            from scipy.spatial.distance import cdist
+            dist_matrix = cdist(Q_m, P_m)
+            mask = torch.from_numpy(dist_matrix).to(device) > 30.0
+            logits[:, :-1] = logits[:, :-1].masked_fill(mask, -50.0)
 
-            # 使用 Sinkhorn 代替 Softmax，解决“抢亲”问题
-            probs = sinkhorn(logits, iterations=3).cpu().numpy()
+            probs = torch.softmax(logits, dim=-1).cpu().numpy()
 
-        # 7. 生成结果
+        # 3. 【核心改进】：全局最优竞争分配 (Greedy Assignment)
+        n_q, n_p_plus_1 = probs.shape
+        n_p = n_p_plus_1 - 1
+
+        # 存储最终每个 Q 的选择
+        # 默认全部设为“新增”(垃圾桶索引 n_p)
+        final_assignments = {} # qi -> matched_pi
+        matched_p_set = set()  # 已被占用的旧点 P 索引
+
+        # 收集所有“想要匹配旧点”的请求，按置信度从高到低排序
+        match_candidates = []
+        for qi in range(n_q):
+            best_pi = np.argmax(probs[qi, :n_p]) # 在旧点中找最好的
+            conf = probs[qi, best_pi]
+            dustbin_conf = probs[qi, n_p]
+
+            # 只有当 匹配旧点的概率 > 匹配新增的概率，且概率够高时，才参与竞争
+            if conf > dustbin_conf and conf > 0.3:
+                match_candidates.append({
+                    'qi': qi,
+                    'pi': best_pi,
+                    'conf': conf
+                })
+
+        # 按置信度降序排列：高手先挑
+        match_candidates.sort(key=lambda x: x['conf'], reverse=True)
+
+        for cand in match_candidates:
+            qi, pi = cand['qi'], cand['pi']
+            if pi not in matched_p_set:
+                # 这个旧点还没被别人占，锁定它！
+                final_assignments[qi] = pi
+                matched_p_set.add(pi)
+            else:
+                # 冲突了！这个旧点已经被置信度更高的人抢走了
+                # 这个点被迫成为“新增”或者去寻找它的次优选（这里简化处理为新增）
+                pass
+
+        # 4. 构建返回结果
         results = []
-        n_p = len(P_ids)
-        TOP_K = min(3, n_p + 1)
-
-        for qi, q_id in enumerate(Q_ids):
-            # 按概率降序排列
-            sorted_indices = np.argsort(probs[qi])[::-1]
-            top_k_indices = sorted_indices[:TOP_K]
-
+        P_ids = [p.id for p in req.old_points]
+        for qi, q_point in enumerate(req.new_points):
             candidates = []
-            for rank, idx in enumerate(top_k_indices):
-                conf = float(probs[qi, idx])
-                is_new = (idx == n_p)
-
-                # 【策略干预】：如果最高置信度都低于 0.3，我们更倾向于认为它是新增
-                # 这一行可以根据你训练后的表现决定是否开启
-                # if rank == 0 and not is_new and conf < 0.3: is_new = True
-
+            if qi in final_assignments:
+                # 成功匹配的情况
+                pi = final_assignments[qi]
                 candidates.append(Candidate(
-                    rank=rank + 1,
-                    matched_old_id=None if is_new else P_ids[idx],
-                    confidence=conf,
-                    is_new_disease=is_new
+                    rank=1, matched_old_id=P_ids[pi],
+                    confidence=float(probs[qi, pi]), is_new_disease=False
                 ))
-
-            results.append(MatchResultItem(new_id=q_id, candidates=candidates))
+            else:
+                # 判定为新增的情况
+                candidates.append(Candidate(
+                    rank=1, matched_old_id=None,
+                    confidence=float(probs[qi, n_p]), is_new_disease=True
+                ))
+            results.append(MatchResultItem(new_id=q_point.id, candidates=candidates))
 
         return MatchResponse(status="success", message="Match completed.", results=results)
 
