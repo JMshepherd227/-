@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import DeviceManager from './components/DeviceManager.vue'
 import TaskManager from './components/TaskManager.vue'
 import IngestConsole from './components/IngestConsole.vue'
@@ -38,9 +38,17 @@ let originalPath = []
 let livePointMarkers = []
 let originalPointMarkers = []
 const WS_BASE = import.meta.env.VITE_WS_BASE || ''
+const TILE_CACHE_TTL_MS = 60 * 1000
+const TILE_REFRESH_DEBOUNCE_MS = 400
+const AUTO_REFRESH_INTERVAL_MS = 15 * 1000
 let droneMarkers = new Map()
 let droneTracks = new Map()
 let ws = null
+let reconnectTimer = null
+const RECONNECT_DELAY_MS = 3000
+let tileRefreshFlushTimer = null
+let autoRefreshTimer = null
+const pendingTileRefreshKeys = new Set()
 
 function loadAMap(key, sec) {
   return new Promise((resolve, reject) => {
@@ -76,6 +84,11 @@ onMounted(async () => {
 
     mapInstance.on('moveend', () => { if (autoLoad.value) scheduleLoad() })
     mapInstance.on('zoomend', () => { if (autoLoad.value) scheduleLoad() })
+    autoRefreshTimer = setInterval(() => {
+      if (autoLoad.value && mapReady.value) {
+        loadViewport().catch(() => {})
+      }
+    }, AUTO_REFRESH_INTERVAL_MS)
     scheduleLoad()
     AMapRef.plugin(['AMap.Geocoder','AMap.Driving'], () => {
       try { geocoder = new AMapRef.Geocoder() } catch {}
@@ -93,26 +106,7 @@ onMounted(async () => {
           drivingLive.on('error', (e) => { mapError.value = (e && e.info) || '路线规划失败' })
         }
         if (drivingLive && livePath.length >= 2) {
-          const start = livePath[0]
-          const end = livePath[livePath.length - 1]
-          const waypoints = livePath.slice(1, livePath.length - 1)
-          try {
-            const S = new AMapRef.LngLat(start[0], start[1])
-            const E = new AMapRef.LngLat(end[0], end[1])
-            const W = waypoints.map(p => new AMapRef.LngLat(p[0], p[1]))
-            drivingLive.clear()
-            if (W.length) {
-              drivingLive.search(S, E, { waypoints: W }, (status, result) => {
-                if (status === 'complete') mapError.value = ''
-                else mapError.value = String(result?.info || result?.message || '路线规划失败')
-              })
-            } else {
-              drivingLive.search(S, E, (status, result) => {
-                if (status === 'complete') mapError.value = ''
-                else mapError.value = String(result?.info || result?.message || '路线规划失败')
-              })
-            }
-          } catch {}
+          searchLiveDrivingRoute()
         }
         if (drivingOriginal && originalPath.length >= 2) {
           const startO = originalPath[0]
@@ -142,6 +136,7 @@ onMounted(async () => {
     window.addEventListener('route-picking-toggle', (evt) => { pickingEnabled = !!(evt?.detail) })
     window.addEventListener('route-points-clear', () => {
       livePath = []
+      dispatchPlannedRoutePoints([])
       try { drivingLive && drivingLive.clear() } catch {}
       try { if (livePointMarkers.length) { mapInstance.remove(livePointMarkers); livePointMarkers = [] } } catch {}
     })
@@ -158,32 +153,7 @@ onMounted(async () => {
         } catch {}
       }
       if (livePointMarkers.length) { try { mapInstance.add(livePointMarkers) } catch {} }
-      if (drivingLive) {
-        if (livePath.length >= 2) {
-          const start = livePath[0]
-          const end = livePath[livePath.length - 1]
-          const waypoints = livePath.slice(1, livePath.length - 1)
-          try {
-            const S = new AMapRef.LngLat(start[0], start[1])
-            const E = new AMapRef.LngLat(end[0], end[1])
-            const W = waypoints.map(p => new AMapRef.LngLat(p[0], p[1]))
-            drivingLive.clear()
-            if (W.length) {
-              drivingLive.search(S, E, { waypoints: W }, (status, result) => {
-                if (status === 'complete') mapError.value = ''
-                else mapError.value = String(result?.info || result?.message || '路线规划失败')
-              })
-            } else {
-              drivingLive.search(S, E, (status, result) => {
-                if (status === 'complete') mapError.value = ''
-                else mapError.value = String(result?.info || result?.message || '路线规划失败')
-              })
-            }
-          } catch {}
-        } else {
-          try { drivingLive.clear() } catch {}
-        }
-      }
+      searchLiveDrivingRoute()
     })
     window.addEventListener('route-original-set', (evt) => {
       const pts = Array.isArray(evt?.detail) ? evt.detail : []
@@ -244,31 +214,22 @@ onMounted(async () => {
         mapInstance.add(m)
       } catch {}
       if (drivingLive && livePath.length >= 2) {
-        const start = livePath[0]
-        const end = livePath[livePath.length - 1]
-        const waypoints = livePath.slice(1, livePath.length - 1)
-        try {
-          const S = new AMapRef.LngLat(start[0], start[1])
-          const E = new AMapRef.LngLat(end[0], end[1])
-          const W = waypoints.map(p => new AMapRef.LngLat(p[0], p[1]))
-          drivingLive.clear()
-          if (W.length) {
-            drivingLive.search(S, E, { waypoints: W }, (status, result) => {
-              if (status === 'complete') mapError.value = ''
-              else mapError.value = String(result?.info || result?.message || '路线规划失败')
-            })
-          } else {
-            drivingLive.search(S, E, (status, result) => {
-              if (status === 'complete') mapError.value = ''
-              else mapError.value = String(result?.info || result?.message || '路线规划失败')
-            })
-          }
-        } catch {}
+        searchLiveDrivingRoute()
       }
     })
     connectTelemetryWS()
   } catch (e) {
     mapError.value = e?.message || '地图初始化失败'
+  }
+})
+
+onBeforeUnmount(() => {
+  if (refreshTimer) clearTimeout(refreshTimer)
+  if (tileRefreshFlushTimer) clearTimeout(tileRefreshFlushTimer)
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer)
+  if (ws) {
+    try { ws.close() } catch {}
+    ws = null
   }
 })
 
@@ -292,6 +253,77 @@ function lat2tileY(lat, z) {
   const r = (lat * Math.PI) / 180
   const y = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2
   return Math.floor(y * n)
+}
+
+function dispatchPlannedRoutePoints(points) {
+  const detail = Array.isArray(points) ? points : []
+  window.dispatchEvent(new CustomEvent('route-planned-path-update', { detail }))
+}
+
+function normalizeDrivingPathPoint(point) {
+  const lngValue = Array.isArray(point)
+    ? point[0]
+    : (typeof point?.getLng === 'function' ? point.getLng() : point?.lng)
+  const latValue = Array.isArray(point)
+    ? point[1]
+    : (typeof point?.getLat === 'function' ? point.getLat() : point?.lat)
+  const lng = Number(lngValue)
+  const lat = Number(latValue)
+  if (Number.isNaN(lng) || Number.isNaN(lat)) return null
+  return { lng, lat }
+}
+
+function extractDrivingRoutePoints(result) {
+  const routes = Array.isArray(result?.routes) ? result.routes : []
+  const route = routes[0]
+  if (!route) return []
+  const rawPath = Array.isArray(route.path) && route.path.length
+    ? route.path
+    : (Array.isArray(route.steps) ? route.steps.flatMap(step => Array.isArray(step?.path) ? step.path : []) : [])
+  const normalized = []
+  for (const item of rawPath) {
+    const point = normalizeDrivingPathPoint(item)
+    if (!point) continue
+    const prev = normalized[normalized.length - 1]
+    if (prev && prev.lng === point.lng && prev.lat === point.lat) continue
+    normalized.push(point)
+  }
+  return normalized
+}
+
+function handleLiveDrivingResult(status, result) {
+  if (status === 'complete') {
+    mapError.value = ''
+    dispatchPlannedRoutePoints(extractDrivingRoutePoints(result))
+  } else {
+    mapError.value = String(result?.info || result?.message || '路线规划失败')
+    dispatchPlannedRoutePoints([])
+  }
+}
+
+function searchLiveDrivingRoute() {
+  if (!drivingLive || !AMapRef) return
+  if (livePath.length < 2) {
+    dispatchPlannedRoutePoints([])
+    try { drivingLive.clear() } catch {}
+    return
+  }
+  const start = livePath[0]
+  const end = livePath[livePath.length - 1]
+  const waypoints = livePath.slice(1, livePath.length - 1)
+  try {
+    const S = new AMapRef.LngLat(start[0], start[1])
+    const E = new AMapRef.LngLat(end[0], end[1])
+    const W = waypoints.map(p => new AMapRef.LngLat(p[0], p[1]))
+    drivingLive.clear()
+    if (W.length) {
+      drivingLive.search(S, E, { waypoints: W }, handleLiveDrivingResult)
+    } else {
+      drivingLive.search(S, E, handleLiveDrivingResult)
+    }
+  } catch {
+    dispatchPlannedRoutePoints([])
+  }
 }
 
 function getVisibleTiles() {
@@ -332,15 +364,80 @@ function scheduleLoad() {
   refreshTimer = setTimeout(loadViewport, 250)
 }
 
-async function fetchTile(z, x, y) {
-  const key = `${z}:${x}:${y}`
-  if (tileCache.has(key)) return tileCache.get(key)
-  const url = `${API_BASE}/api/v1/map/tile?z=${encodeURIComponent(z)}&x=${encodeURIComponent(x)}&y=${encodeURIComponent(y)}`
+function tileKey(z, x, y) {
+  return `${z}:${x}:${y}`
+}
+
+function pruneTileCache() {
+  const now = Date.now()
+  for (const [key, entry] of tileCache.entries()) {
+    if (!entry || entry.expiresAt <= now) {
+      tileCache.delete(key)
+    }
+  }
+}
+
+function evictTileCacheKeys(keys) {
+  for (const key of keys) {
+    tileCache.delete(key)
+  }
+}
+
+function pointToTileKey(lng, lat, z) {
+  const Lng = Number(lng)
+  const Lat = Number(lat)
+  if (Number.isNaN(Lng) || Number.isNaN(Lat)) return ''
+  return tileKey(z, lon2tileX(Lng, z), lat2tileY(Lat, z))
+}
+
+function hasVisibleTileKey(keys) {
+  if (!mapInstance || !keys || keys.size === 0) return false
+  const visibleKeys = new Set(getVisibleTiles().map(t => tileKey(t.z, t.x, t.y)))
+  for (const key of keys) {
+    if (visibleKeys.has(key)) return true
+  }
+  return false
+}
+
+function queueTileRefreshForPoint(lng, lat) {
+  if (!mapInstance || !mapReady.value) return
+  const z = clamp(Math.floor(mapInstance.getZoom()), 1, 18)
+  const key = pointToTileKey(lng, lat, z)
+  if (!key) return
+  pendingTileRefreshKeys.add(key)
+  tileCache.delete(key)
+  if (tileRefreshFlushTimer) clearTimeout(tileRefreshFlushTimer)
+  tileRefreshFlushTimer = setTimeout(async () => {
+    const forceKeys = new Set(pendingTileRefreshKeys)
+    pendingTileRefreshKeys.clear()
+    tileRefreshFlushTimer = null
+    evictTileCacheKeys(forceKeys)
+    if (hasVisibleTileKey(forceKeys)) {
+      await loadViewport({ forceKeys })
+    }
+  }, TILE_REFRESH_DEBOUNCE_MS)
+}
+
+async function fetchTile(z, x, y, options = {}) {
+  pruneTileCache()
+  const { force = false } = options
+  const key = tileKey(z, x, y)
+  const cached = tileCache.get(key)
+  if (!force && cached && cached.expiresAt > Date.now()) return cached.data
+  if (force) tileCache.delete(key)
+  const query = new URLSearchParams({
+    z: String(z),
+    x: String(x),
+    y: String(y),
+    forceRefresh: force ? 'true' : 'false'
+  })
+  const url = `${API_BASE}/api/v1/map/tile?${query.toString()}`
   const res = await fetch(url)
+  if (!res.ok) throw new Error(`瓦片加载失败(${res.status})`)
   const json = await res.json()
-  if (json && json.code === 200) {
-    const data = Array.isArray(json.data) ? json.data : []
-    tileCache.set(key, data)
+  const data = json && json.code === 200 && Array.isArray(json.data) ? json.data : null
+  if (data) {
+    tileCache.set(key, { data, expiresAt: Date.now() + TILE_CACHE_TTL_MS })
     return data
   }
   throw new Error(json?.msg || '瓦片加载失败')
@@ -355,9 +452,9 @@ function clearMarkers() {
 }
 
 function pointOf(img) {
-  const lng = img.lng
-  const lat = img.lat
-  if (lng == null || lat == null) return null
+  const lng = img.matchedLng ?? img.rawLng ?? img.lng
+  const lat = img.matchedLat ?? img.rawLat ?? img.lat
+  if (lng === null || lng === undefined || lat === null || lat === undefined) return null
   const Lng = Number(lng)
   const Lat = Number(lat)
   if (Number.isNaN(Lng) || Number.isNaN(Lat)) return null
@@ -377,6 +474,15 @@ function updateMarkers(list) {
     m.on('click', () => {
       openDetail(img)
     })
+    // 兼容 DefectEntity (由 /api/v1/map/tile 返回) 和 InspectionImage
+    const isDefect = img.isDefect || (img.defectType !== undefined)
+    const count = img.defectCount ?? (img.defectType !== undefined ? 1 : 0)
+    
+    m.setLabel({
+      direction: 'top',
+      offset: new AMapRef.Pixel(0, -8),
+      content: `<div style="background:${isDefect ? '#ef4444' : '#2563eb'};color:#fff;padding:2px 6px;border-radius:999px;border:1px solid rgba(255,255,255,0.2);font-size:12px;">${count}</div>`
+    })
     markers.push(m)
   }
   mapInstance.add(markers)
@@ -387,7 +493,20 @@ function ensureDroneMarker(id) {
   const key = String(id)
   let mk = droneMarkers.get(key)
   if (!mk) {
-    mk = new AMapRef.Marker({ position: [0, 0], anchor: 'center', title: `无人机#${key}` })
+    // 使用本地无人机图标
+    const droneIcon = new AMapRef.Icon({
+      size: new AMapRef.Size(40, 40),
+      image: '/drone.png', // 指向 public/drone.png
+      imageSize: new AMapRef.Size(40, 40)
+    })
+
+    mk = new AMapRef.Marker({
+      position: [0, 0],
+      anchor: 'center',
+      title: `无人机#${key}`,
+      icon: droneIcon,
+      offset: new AMapRef.Pixel(-20, -20)
+    })
     droneMarkers.set(key, mk)
     mapInstance.add(mk)
   }
@@ -415,29 +534,72 @@ function appendTrack(id, lng, lat) {
 }
 
 function connectTelemetryWS() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
+  
   try {
     const url = WS_BASE || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/telemetry`
     if (ws) { try { ws.close() } catch {} ; ws = null }
+    
     ws = new WebSocket(url)
+    
+    ws.onopen = () => {
+      console.log('Telemetry WebSocket connected')
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+    }
+
+    ws.onclose = () => {
+      console.log('Telemetry WebSocket disconnected, scheduling reconnect...')
+      ws = null
+      scheduleReconnect()
+    }
+
+    ws.onerror = (err) => {
+      console.error('Telemetry WebSocket error:', err)
+      ws = null
+    }
+
     ws.onmessage = (evt) => {
       const text = String(evt.data ?? '')
       try {
         const data = JSON.parse(text)
         if (data && data.type === 'telemetry') {
-          const id = Number(data.droneId)
-          const Lng = Number(data.lng)
-          const Lat = Number(data.lat)
-          if (!Number.isNaN(id) && !Number.isNaN(Lng) && !Number.isNaN(Lat)) {
-            updateDroneMarker(id, Lng, Lat)
-            appendTrack(id, Lng, Lat)
+          const payload = Array.isArray(data.data) ? data.data : [data.data ?? data]
+          for (const item of payload) {
+            const id = Number(item?.droneId ?? item?.id)
+            const Lng = Number(item?.lng)
+            const Lat = Number(item?.lat)
+            if (!Number.isNaN(id) && !Number.isNaN(Lng) && !Number.isNaN(Lat)) {
+              updateDroneMarker(id, Lng, Lat)
+              appendTrack(id, Lng, Lat)
+              queueTileRefreshForPoint(Lng, Lat)
+            }
           }
+        } else if (data && data.type === 'new_defect') {
+          const Lng = Number(data?.data?.lng)
+          const Lat = Number(data?.data?.lat)
+          if (!Number.isNaN(Lng) && !Number.isNaN(Lat)) queueTileRefreshForPoint(Lng, Lat)
         }
       } catch {}
     }
-  } catch {}
+  } catch (e) {
+    console.error('Failed to create WebSocket:', e)
+    scheduleReconnect()
+  }
 }
 
-async function loadViewport() {
+function scheduleReconnect() {
+  if (reconnectTimer) return
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    connectTelemetryWS()
+  }, RECONNECT_DELAY_MS)
+}
+
+async function loadViewport(options = {}) {
+  const { force = false, forceKeys = null } = options
   if (!mapReady.value) return
   mapLoading.value = true
   mapError.value = ''
@@ -445,11 +607,14 @@ async function loadViewport() {
   try {
     const tiles = getVisibleTiles()
     tileHint.value = tiles.length ? `tiles=${tiles.length}` : ''
-    const results = await Promise.all(tiles.map(t => fetchTile(t.z, t.x, t.y).catch(() => [])))
+    const results = await Promise.all(tiles.map(t => {
+      const shouldForce = force || !!forceKeys?.has(tileKey(t.z, t.x, t.y))
+      return fetchTile(t.z, t.x, t.y, { force: shouldForce }).catch(() => [])
+    }))
     const merged = results.flat()
     const uniq = new Map()
     for (const it of merged) {
-      if (it && it.id != null) uniq.set(String(it.id), it)  // DefectEntity.id
+      if (it && it.id != null) uniq.set(String(it.id), it)
     }
     const list = Array.from(uniq.values())
     defects.value = list
@@ -504,7 +669,7 @@ function closeDetail() {
       <div class="map-wrap">
         <div ref="mapEl" class="map-canvas"></div>
         <div class="map-toolbar">
-          <button @click="loadViewport">刷新</button>
+          <button @click="loadViewport({ force: true })">刷新</button>
           <button class="secondary" @click="autoLoad = !autoLoad">{{ autoLoad ? '自动刷新：开' : '自动刷新：关' }}</button>
           <span v-if="mapLoading" class="muted">加载中…</span>
           <span v-else class="muted">点位：{{ defects.length }} {{ tileHint ? ('· '+tileHint) : '' }}</span>
@@ -524,14 +689,25 @@ function closeDetail() {
             <IngestConsole v-else-if="active==='ingest'" class="ingest-root" />
             <template v-else>
               <div class="kv">
-                <div class="k">实体ID</div><div class="v">{{ selected.id }}</div>
-                <div class="k">病害类型</div><div class="v">{{ selected.defectType ?? '-' }}</div>
+                <div class="k">图片ID</div><div class="v">{{ selected.id }}</div>
+                <div class="k">任务ID</div><div class="v">{{ selected.taskId }}</div>
+                <div class="k">无人机ID</div><div class="v">{{ selected.droneId }}</div>
+                <div class="k">病害数</div><div class="v">{{ selected.defectCount ?? (selected.defectType !== undefined ? 1 : 0) }}</div>
                 <div class="k">状态</div><div class="v">{{ selected.status ?? '-' }}</div>
                 <div class="k">坐标</div>
-                <div class="v">{{ selected.lng ?? '-' }}, {{ selected.lat ?? '-' }}</div>
-                <div class="k">创建时间</div><div class="v">{{ selected.createTime ?? '-' }}</div>
+                <div class="v">{{ (selected.matchedLng ?? selected.rawLng ?? selected.lng) ?? '-' }}, {{ (selected.matchedLat ?? selected.rawLat ?? selected.lat) ?? '-' }}</div>
               </div>
 
+              <div class="imgs">
+                <a v-if="selected.originalImageUrl" class="img-link" :href="joinUrl(API_BASE, selected.originalImageUrl)" target="_blank" rel="noreferrer">
+                  <div class="img-title">原图</div>
+                  <img :src="joinUrl(API_BASE, selected.originalImageUrl)" alt="origin" />
+                </a>
+                <a v-if="selected.resultImageUrl" class="img-link" :href="joinUrl(API_BASE, selected.resultImageUrl)" target="_blank" rel="noreferrer">
+                  <div class="img-title">结果图</div>
+                  <img :src="joinUrl(API_BASE, selected.resultImageUrl)" alt="result" />
+                </a>
+              </div>
 
               <div class="detail">
                 <div class="detail-title">识别列表</div>
@@ -540,19 +716,14 @@ function closeDetail() {
                 <div v-else-if="selectedDetails.length===0" class="muted">暂无详情</div>
                 <table v-else class="table">
                   <thead>
-                  <tr><th>类型</th><th>置信度</th><th>地址</th><th>时间</th><th>图片</th></tr>
+                    <tr><th>类型</th><th>置信度</th><th>时间</th></tr>
                   </thead>
                   <tbody>
-                  <tr v-for="d in selectedDetails" :key="d.id">
-                    <td>{{ d.defectType }}</td>
-                    <td>{{ d.confidence }}</td>
-                    <td>{{ d.address || d.roadName || '-' }}</td>
-                    <td>{{ d.createTime ?? '-' }}</td>
-                    <td>
-                      <a v-if="d.resultImageUrl" :href="joinUrl(API_BASE, d.resultImageUrl)" target="_blank" rel="noreferrer" style="color:#60a5fa;font-size:12px;">结果图</a>
-                      <a v-if="d.originalImageUrl" :href="joinUrl(API_BASE, d.originalImageUrl)" target="_blank" rel="noreferrer" style="color:#9ca3af;font-size:12px;margin-left:6px;">原图</a>
-                    </td>
-                  </tr>
+                    <tr v-for="d in selectedDetails" :key="d.id">
+                      <td>{{ d.defectType }}</td>
+                      <td>{{ d.confidence }}</td>
+                      <td>{{ d.createTime ?? '-' }}</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -588,8 +759,8 @@ function closeDetail() {
 .img-link{display:block;border:1px solid #334155;border-radius:8px;overflow:hidden;text-decoration:none;color:#e5e7eb;background:#0b0f19}
 .img-title{padding:6px 8px;border-bottom:1px solid #334155;color:#9ca3af;font-size:12px}
 .img-link img{display:block;width:100%;height:160px;object-fit:cover}
-.detail-title{font-weight:600;margin-bottom:8px}
-.table{width:100%;border-collapse:collapse}
+.detail-title{font-weight:600;margin-bottom:8px;color:#ffffff}
+.table{width:100%;border-collapse:collapse;color:#ffffff}
 .table th,.table td{border:1px solid #334155;padding:6px 8px;font-size:12px}
 .table thead{background:#1f2937}
 .devices-root{flex:1}

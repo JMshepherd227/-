@@ -83,14 +83,14 @@ public class GlobalMatchService {
                     String oldIdStr = candidate.getMatchedOldId();
                     Long oldEntityId = Long.parseLong(oldIdStr);
 
-                    if (conf >= 0.7) {
+                    if (conf >= 0.6) {
                         tempEntityService.updateOldDisease(oldEntityId, newId);
                         matched = true;
                         break;
                     }
 
-                    else if (conf >= 0.30) {
-                        log.info("GNN 犹豫中 (Conf: {})，启动 SIFT 视觉验证 {} -> {}", conf, newId, oldIdStr);
+                    else {
+                        log.info("GNN 犹豫中 (Conf: {})，启动 LoFTR 视觉验证 {} -> {}", conf, newId, oldIdStr);
                         boolean isVisualMatch = tempEntityService.checkWithLoFTR(oldEntityId, newId);
 
                         if (isVisualMatch) {
@@ -101,10 +101,6 @@ public class GlobalMatchService {
                         } else {
                             log.info("   SIFT 否决了匹配 {} -> {}，尝试下一个候选...", newId, oldIdStr);
                         }
-                    }
-
-                    else {
-                        log.debug("   忽略低分候选 {} -> {} (Conf: {})", newId, oldIdStr, conf);
                     }
                 }
 

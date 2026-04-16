@@ -14,6 +14,8 @@ const wsStatus = ref('disconnected')
 const wsError = ref('')
 const wsLastAt = ref('')
 let ws = null
+let reconnectTimer = null
+const RECONNECT_DELAY_MS = 3000
 
 const logs = ref([])
 function nowText() {
@@ -77,6 +79,7 @@ function connectWs() {
   } catch (e) {
     wsStatus.value = 'disconnected'
     wsError.value = e.message || 'WebSocket 创建失败'
+    scheduleReconnect()
     return
   }
 
@@ -84,17 +87,24 @@ function connectWs() {
     wsStatus.value = 'connected'
     wsLastAt.value = nowText()
     pushLog('ws', 'WebSocket 已连接', { url: WS_BASE })
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
   }
   ws.onclose = () => {
     wsStatus.value = 'disconnected'
     wsLastAt.value = nowText()
-    pushLog('ws', 'WebSocket 已断开')
+    pushLog('ws', 'WebSocket 已断开，准备重连...')
+    ws = null
+    scheduleReconnect()
   }
   ws.onerror = () => {
     wsStatus.value = 'error'
     wsLastAt.value = nowText()
     wsError.value = 'WebSocket 连接异常'
     pushLog('error', 'WebSocket 连接异常')
+    ws = null
   }
   ws.onmessage = (evt) => {
     wsLastAt.value = nowText()
@@ -114,7 +124,21 @@ function connectWs() {
   }
 }
 
+function scheduleReconnect() {
+  if (reconnectTimer) return
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    if (wsStatus.value !== 'connected' && wsStatus.value !== 'connecting') {
+      connectWs()
+    }
+  }, RECONNECT_DELAY_MS)
+}
+
 function disconnectWs() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
   if (ws) {
     try { ws.close() } catch {}
   }
@@ -142,6 +166,7 @@ async function refreshMeta() {
 
 onMounted(async () => {
   await refreshMeta()
+  connectWs()
 })
 
 onBeforeUnmount(() => {
@@ -153,11 +178,18 @@ onBeforeUnmount(() => {
 <template>
   <div class="ingest">
     <div class="toolbar">
-      <button @click="refreshMeta">刷新设备/任务</button>
-      <button v-if="canConnectWs" @click="connectWs">连接 WebSocket</button>
-      <button v-else @click="disconnectWs">断开 WebSocket</button>
-      <button class="secondary" @click="clearLogs">清空日志</button>
-      <span class="muted">WS: {{ wsStatus }}{{ wsLastAt ? (' · '+wsLastAt) : '' }}</span>
+      <div class="actions">
+        <button @click="refreshMeta">刷新设备/任务</button>
+        <button class="secondary" @click="clearLogs">清空日志</button>
+      </div>
+      
+      <div class="ws-status">
+        <span class="status-dot" :class="wsStatus"></span>
+        <span class="muted">WS: {{ wsStatus === 'connected' ? '在线' : (wsStatus === 'connecting' ? '重连中...' : '离线') }}{{ wsLastAt ? (' · '+wsLastAt) : '' }}</span>
+        <button v-if="wsStatus !== 'connected'" class="mini-btn" @click="connectWs">手动重连</button>
+        <button v-else class="mini-btn secondary" @click="disconnectWs">断开</button>
+      </div>
+
       <span v-if="wsError" class="error">{{ wsError }}</span>
       <span v-if="busy" class="muted">处理中…</span>
       <span v-if="error" class="error">{{ error }}</span>
@@ -196,7 +228,15 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ingest{display:flex;flex-direction:column;height:100%;padding:12px;box-sizing:border-box;color:#e5e7eb}
-.toolbar{display:flex;gap:12px;align-items:center;margin-bottom:12px;background:rgba(17,24,39,0.9);border:1px solid #374151;border-radius:8px;padding:8px}
+.toolbar{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px;background:rgba(17,24,39,0.9);border:1px solid #374151;border-radius:8px;padding:8px}
+.actions{display:flex;gap:8px}
+.ws-status{display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.3);padding:4px 10px;border-radius:6px;border:1px solid #334155}
+.status-dot{width:8px;height:8px;border-radius:50%;background:#6b7280}
+.status-dot.connected{background:#10b981;box-shadow:0 0 8px #10b981}
+.status-dot.connecting{background:#f59e0b;animation:blink 1s infinite}
+.status-dot.error{background:#ef4444}
+@keyframes blink{0%{opacity:1}50%{opacity:0.4}100%{opacity:1}}
+.mini-btn{padding:2px 8px;font-size:11px}
 .table-wrap{flex:1;overflow:auto;background:rgba(17,24,39,0.4);border:1px solid #374151;border-radius:8px}
 .table{width:100%;border-collapse:collapse;table-layout:fixed}
 .table th,.table td{border:1px solid #334155;padding:10px;text-align:left;font-size:13px;word-break:break-all}
