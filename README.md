@@ -1,38 +1,59 @@
-# frontend
+# 基于无人机的公路健康情况巡检系统开发
 
-This template should help get you started developing with Vue 3 in Vite.
+大创项目仓库。
 
-## Recommended IDE Setup
+项目成员：
+- 组长：金枫凯（23301126）
+- 组员：黄晨曦（23301123）
+- 组员：黄冠宇（23301124）
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+## 项目结构
 
-## Recommended Browser Setup
+- `frontend/`：Vue 3 + Vite 前端
+- `backend/`：Spring Boot 后端
+- `ai-service/`：Python AI 推理与无人机场景相关服务
+- `disease_matching/`：病害匹配与训练相关代码
+- `docs/`：项目文档、部署说明、接口协议和测试清单
+- `db/`：数据库导出与备份文件
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+## 快速启动
 
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
+### 前端
 
 ```sh
+cd frontend
 npm install
-```
-
-### Compile and Hot-Reload for Development
-
-```sh
 npm run dev
 ```
 
-### Compile and Minify for Production
+### 后端
 
 ```sh
-npm run build
+cd backend
+./mvnw spring-boot:run
 ```
+
+Windows 下可使用：
+
+```sh
+mvnw.cmd spring-boot:run
+```
+
+### AI 服务
+
+```sh
+cd ai-service
+pip install -r requirements.txt
+python app.py
+```
+
+## 文档入口
+
+- `docs/项目概览.md`
+- `docs/快速开始（Windows）.md`
+- `docs/部署与配置说明.md`
+- `docs/接口与消息协议.md`
+
+## 说明
+
+根目录原始 README 为前端模板文档，现已整理为项目总入口，便于整体提交与交付。
