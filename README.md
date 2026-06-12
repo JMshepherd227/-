@@ -53,7 +53,3 @@ python app.py
 - `docs/快速开始（Windows）.md`
 - `docs/部署与配置说明.md`
 - `docs/接口与消息协议.md`
-
-## 说明
-
-根目录原始 README 为前端模板文档，现已整理为项目总入口，便于整体提交与交付。
